@@ -193,7 +193,7 @@ jobs:
   # ── Preprod promotion (manual gate, main branch only) ─────────────────────
   promote-preprod:
     needs: app
-    if: github.ref == 'refs/heads/main' && needs.app.result == 'success'
+    if: github.ref == 'refs/heads/main' && needs.app.result == 'success' && secrets.PREPROD_DEPLOY_ROLE_ARN != ''
     runs-on: ubuntu-latest
     environment:
       name: preprod
