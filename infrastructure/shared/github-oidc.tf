@@ -113,6 +113,7 @@ resource "aws_iam_role_policy" "github_nonprod_deploy" {
           "ecr:DeleteRepository",
           "ecr:ListTagsForResource",
           "ecr:GetLifecyclePolicy",
+          "ecr:DeleteLifecyclePolicy",
           "ecr:BatchDeleteImage",
           "ecr:DescribeImages",
         ]
@@ -157,6 +158,7 @@ resource "aws_iam_role_policy" "github_nonprod_deploy" {
           "iam:ListRolePolicies",
           "iam:ListAttachedRolePolicies",
           "iam:PassRole",
+          "iam:CreateServiceLinkedRole",
           "iam:CreateOpenIDConnectProvider",
           "iam:DeleteOpenIDConnectProvider",
           "iam:GetOpenIDConnectProvider",
