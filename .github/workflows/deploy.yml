@@ -65,6 +65,21 @@ jobs:
             terraform -chdir=${{ env.TF_DIR }} init -reconfigure
           fi
 
+      # Build Lambda authorizer zip with dependencies before Terraform runs.
+      # Terraform reads the filename at plan time for existing Lambda updates,
+      # so the zip must exist before terraform init/plan/apply.
+      - name: Build Lambda authorizer package
+        run: |
+          ENV="${{ needs.env-config.outputs.env }}"
+          BUILD_DIR="/tmp/anycompany-authorizer-build-${ENV}"
+          ZIP_PATH="/tmp/anycompany-authorizer-${ENV}.zip"
+          rm -rf "${BUILD_DIR}"
+          mkdir -p "${BUILD_DIR}"
+          python3 -m pip install -q -r src/authorizer/requirements.txt -t "${BUILD_DIR}"
+          cp src/authorizer/lambda_authorizer.py "${BUILD_DIR}/"
+          cd "${BUILD_DIR}" && zip -qr "${ZIP_PATH}" .
+          echo "Built ${ZIP_PATH} ($(du -sh ${ZIP_PATH} | cut -f1))"
+
       # Phase 1 — EKS cluster + IAM roles
       # Pass endpoint from AWS if cluster already exists so kubernetes provider
       # doesn't fall back to localhost. K8s resources are not targeted here.
