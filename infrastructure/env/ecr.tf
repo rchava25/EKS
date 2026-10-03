@@ -5,7 +5,7 @@
 resource "aws_ecr_repository" "login_service" {
   count                = var.create_ecr ? 1 : 0
   name                 = "anycompany-login-service"
-  image_tag_mutability = "MUTABLE"
+  image_tag_mutability = "IMMUTABLE"
 
   image_scanning_configuration {
     scan_on_push = true
@@ -20,7 +20,7 @@ resource "aws_ecr_repository" "login_service" {
 resource "aws_ecr_repository" "users_service" {
   count                = var.create_ecr ? 1 : 0
   name                 = "anycompany-users-service"
-  image_tag_mutability = "MUTABLE"
+  image_tag_mutability = "IMMUTABLE"
 
   image_scanning_configuration {
     scan_on_push = true
@@ -39,12 +39,11 @@ resource "aws_ecr_lifecycle_policy" "login_service" {
   policy = jsonencode({
     rules = [{
       rulePriority = 1
-      description  = "Retain last 10 tagged images"
+      description  = "Retain last 20 images; all envs share the same SHA tag"
       selection = {
-        tagStatus   = "tagged"
-        tagPrefixList = ["dev-", "mr-", "preprod-", "prod-"]
+        tagStatus   = "any"
         countType   = "imageCountMoreThan"
-        countNumber = 10
+        countNumber = 20
       }
       action = { type = "expire" }
     }]
@@ -58,12 +57,11 @@ resource "aws_ecr_lifecycle_policy" "users_service" {
   policy = jsonencode({
     rules = [{
       rulePriority = 1
-      description  = "Retain last 10 tagged images"
+      description  = "Retain last 20 images; all envs share the same SHA tag"
       selection = {
-        tagStatus     = "tagged"
-        tagPrefixList = ["dev-", "mr-", "preprod-", "prod-"]
-        countType     = "imageCountMoreThan"
-        countNumber   = 10
+        tagStatus   = "any"
+        countType   = "imageCountMoreThan"
+        countNumber = 20
       }
       action = { type = "expire" }
     }]
