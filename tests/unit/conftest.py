@@ -6,13 +6,12 @@ import pytest
 from fastapi.testclient import TestClient
 from moto import mock_aws
 
-os.environ.setdefault("TABLE_NAME", "test-users")
-os.environ.setdefault("AWS_REGION", "us-east-1")
-os.environ.setdefault("COGNITO_CLIENT_ID", "test-client-id")
-os.environ.setdefault("COGNITO_USER_POOL_ID", "us-east-1_test")
-os.environ.setdefault(
-    "COGNITO_JWKS_URL",
-    "https://cognito-idp.us-east-1.amazonaws.com/us-east-1_test/.well-known/jwks.json",
+os.environ["TABLE_NAME"] = "test-users"
+os.environ["AWS_REGION"] = "us-east-1"
+os.environ["COGNITO_CLIENT_ID"] = "test-client-id"
+os.environ["COGNITO_USER_POOL_ID"] = "us-east-1_test"
+os.environ["COGNITO_JWKS_URL"] = (
+    "https://cognito-idp.us-east-1.amazonaws.com/us-east-1_test/.well-known/jwks.json"
 )
 
 _LOGIN_SRC = "/workshop/src/login"

@@ -307,7 +307,7 @@ curl -s -o /dev/null -w "%{http_code}" -X POST "$API_URL/auth/login" \
 
 ---
 
-## Task 14 — Unit Tests: Login Service
+## Task 14 — Unit Tests: Login Service ✅
 
 **Create:** `tests/unit/test_login.py`, `tests/unit/test_refresh.py`, `tests/unit/test_logout.py`
 
@@ -327,7 +327,7 @@ Mock `boto3` Cognito client with `unittest.mock`.
 
 ---
 
-## Task 15 — Unit Tests: Users Service
+## Task 15 — Unit Tests: Users Service ✅
 
 **Create:** `tests/unit/conftest.py`, `tests/unit/test_create_user.py`, `test_get_user.py`, `test_update_user.py`, `test_delete_user.py`, `test_list_users.py`
 
@@ -345,7 +345,7 @@ Mock `boto3` Cognito client with `unittest.mock`.
 
 ---
 
-## Task 16 — Unit Tests: Lambda Authorizer
+## Task 16 — Unit Tests: Lambda Authorizer ✅
 
 **Create:** `tests/unit/test_authorizer.py`
 
