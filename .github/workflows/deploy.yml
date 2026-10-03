@@ -94,8 +94,11 @@ jobs:
       # Phase 2 — full apply with EKS outputs available for kubernetes provider
       - name: Terraform Apply Phase 2 (All)
         run: |
-          EKS_ENDPOINT=$(terraform -chdir=${{ env.TF_DIR }} output -raw eks_cluster_endpoint)
-          EKS_CA=$(terraform -chdir=${{ env.TF_DIR }} output -raw eks_cluster_ca_cert)
+          EKS_CLUSTER="anycompany-users-${{ needs.env-config.outputs.env }}-cluster"
+          EKS_ENDPOINT=$(aws eks describe-cluster --name "${EKS_CLUSTER}" \
+            --query 'cluster.endpoint' --output text 2>/dev/null || echo "")
+          EKS_CA=$(aws eks describe-cluster --name "${EKS_CLUSTER}" \
+            --query 'cluster.certificateAuthority.data' --output text 2>/dev/null || echo "")
           terraform -chdir=${{ env.TF_DIR }} apply \
             -var-file=${{ needs.env-config.outputs.tfvars_file }} \
             -var="env=${{ needs.env-config.outputs.env }}" \
