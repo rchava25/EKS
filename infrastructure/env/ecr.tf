@@ -6,6 +6,7 @@ resource "aws_ecr_repository" "login_service" {
   count                = var.create_ecr ? 1 : 0
   name                 = "anycompany-login-service"
   image_tag_mutability = "IMMUTABLE"
+  force_delete         = true
 
   image_scanning_configuration {
     scan_on_push = true
@@ -21,6 +22,7 @@ resource "aws_ecr_repository" "users_service" {
   count                = var.create_ecr ? 1 : 0
   name                 = "anycompany-users-service"
   image_tag_mutability = "IMMUTABLE"
+  force_delete         = true
 
   image_scanning_configuration {
     scan_on_push = true
