@@ -74,7 +74,7 @@ jobs:
               -backend-config="bucket=${{ secrets.TF_STATE_BUCKET }}" \
               -backend-config="region=${{ env.AWS_REGION }}"
           else
-            terraform -chdir=${{ env.TF_DIR }} init -backend=false
+            terraform -chdir=${{ env.TF_DIR }} init -backend=false -reconfigure
           fi
 
       # Phase 1 — create EKS cluster (kubernetes provider not yet usable)
@@ -283,7 +283,7 @@ jobs:
               -backend-config="bucket=${{ secrets.TF_STATE_BUCKET }}" \
               -backend-config="region=${{ env.AWS_REGION }}"
           else
-            terraform -chdir=${{ env.TF_DIR }} init -backend=false
+            terraform -chdir=${{ env.TF_DIR }} init -backend=false -reconfigure
           fi
 
       - name: Terraform Destroy (MR env)
