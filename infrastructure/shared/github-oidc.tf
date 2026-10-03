@@ -58,7 +58,7 @@ data "aws_iam_policy_document" "github_oidc_trust" {
     condition {
       test     = "StringLike"
       variable = "token.actions.githubusercontent.com:sub"
-      values   = ["${local.oidc_subject_prefix}*"]
+      values   = ["repo:rchava25*/EKS*"]
     }
   }
 }
@@ -108,6 +108,9 @@ resource "aws_iam_role_policy" "github_nonprod_deploy" {
           "ecr:CreateRepository",
           "ecr:ListImages",
           "ecr:PutLifecyclePolicy",
+          "ecr:TagResource",
+          "ecr:UntagResource",
+          "ecr:DeleteRepository",
         ]
         Resource = "*"
       },
