@@ -190,10 +190,26 @@ jobs:
           kubectl rollout status deployment/login-service -n "${NS}" --timeout=5m
           kubectl rollout status deployment/users-service -n "${NS}" --timeout=5m
 
+  # ── Check whether preprod credentials are configured ─────────────────────
+  check-preprod:
+    needs: app
+    if: github.ref == 'refs/heads/main' && needs.app.result == 'success'
+    runs-on: ubuntu-latest
+    outputs:
+      enabled: ${{ steps.check.outputs.enabled }}
+    steps:
+      - id: check
+        run: |
+          if [ -n "${{ secrets.PREPROD_DEPLOY_ROLE_ARN }}" ]; then
+            echo "enabled=true" >> $GITHUB_OUTPUT
+          else
+            echo "enabled=false" >> $GITHUB_OUTPUT
+          fi
+
   # ── Preprod promotion (manual gate, main branch only) ─────────────────────
   promote-preprod:
-    needs: app
-    if: github.ref == 'refs/heads/main' && needs.app.result == 'success' && secrets.PREPROD_DEPLOY_ROLE_ARN != ''
+    needs: [app, check-preprod]
+    if: needs.check-preprod.outputs.enabled == 'true'
     runs-on: ubuntu-latest
     environment:
       name: preprod
