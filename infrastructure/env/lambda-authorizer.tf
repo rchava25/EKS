@@ -25,11 +25,6 @@ resource "null_resource" "authorizer_build" {
   }
 }
 
-data "local_file" "authorizer_zip" {
-  filename   = local.authorizer_zip_path
-  depends_on = [null_resource.authorizer_build]
-}
-
 resource "aws_iam_role" "lambda_authorizer" {
   name = "${local.prefix}-authorizer-role"
 
@@ -61,7 +56,10 @@ resource "aws_lambda_function" "token_authorizer" {
   handler       = "lambda_authorizer.handler"
 
   filename         = local.authorizer_zip_path
-  source_code_hash = data.local_file.authorizer_zip.content_base64sha256
+  source_code_hash = base64sha256(join("", [
+    filesha256("${local.authorizer_src}/lambda_authorizer.py"),
+    filesha256("${local.authorizer_src}/requirements.txt"),
+  ]))
 
   environment {
     variables = {
