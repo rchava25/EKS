@@ -28,11 +28,12 @@ locals {
           security    = []
           responses   = { "200" = { description = "Successful login" } }
           "x-amazon-apigateway-integration" = {
-            type           = "HTTP_PROXY"
-            httpMethod     = "POST"
-            uri            = "http://${aws_lb.alb.dns_name}/auth/login"
-            connectionType = "VPC_LINK"
-            connectionId   = aws_apigatewayv2_vpc_link.vpc_link.id
+            type             = "HTTP_PROXY"
+            httpMethod       = "POST"
+            uri              = "http://${aws_lb.alb.dns_name}/auth/login"
+            connectionType   = "VPC_LINK"
+            connectionId     = aws_apigatewayv2_vpc_link.vpc_link.id
+            integrationTarget = aws_lb.alb.arn
           }
         }
       }
@@ -45,8 +46,9 @@ locals {
             type           = "HTTP_PROXY"
             httpMethod     = "POST"
             uri            = "http://${aws_lb.alb.dns_name}/auth/refresh"
-            connectionType = "VPC_LINK"
-            connectionId   = aws_apigatewayv2_vpc_link.vpc_link.id
+            connectionType    = "VPC_LINK"
+            connectionId      = aws_apigatewayv2_vpc_link.vpc_link.id
+            integrationTarget = aws_lb.alb.arn
           }
         }
       }
@@ -59,8 +61,9 @@ locals {
             type           = "HTTP_PROXY"
             httpMethod     = "POST"
             uri            = "http://${aws_lb.alb.dns_name}/auth/logout"
-            connectionType = "VPC_LINK"
-            connectionId   = aws_apigatewayv2_vpc_link.vpc_link.id
+            connectionType    = "VPC_LINK"
+            connectionId      = aws_apigatewayv2_vpc_link.vpc_link.id
+            integrationTarget = aws_lb.alb.arn
           }
         }
       }
@@ -77,8 +80,9 @@ locals {
             type           = "HTTP_PROXY"
             httpMethod     = "GET"
             uri            = "http://${aws_lb.alb.dns_name}/users"
-            connectionType = "VPC_LINK"
-            connectionId   = aws_apigatewayv2_vpc_link.vpc_link.id
+            connectionType    = "VPC_LINK"
+            connectionId      = aws_apigatewayv2_vpc_link.vpc_link.id
+            integrationTarget = aws_lb.alb.arn
           }
         }
         post = {
@@ -89,8 +93,9 @@ locals {
             type           = "HTTP_PROXY"
             httpMethod     = "POST"
             uri            = "http://${aws_lb.alb.dns_name}/users"
-            connectionType = "VPC_LINK"
-            connectionId   = aws_apigatewayv2_vpc_link.vpc_link.id
+            connectionType    = "VPC_LINK"
+            connectionId      = aws_apigatewayv2_vpc_link.vpc_link.id
+            integrationTarget = aws_lb.alb.arn
           }
         }
       }
@@ -104,8 +109,9 @@ locals {
             type           = "HTTP_PROXY"
             httpMethod     = "GET"
             uri            = "http://${aws_lb.alb.dns_name}/users/{user_id}"
-            connectionType = "VPC_LINK"
-            connectionId   = aws_apigatewayv2_vpc_link.vpc_link.id
+            connectionType    = "VPC_LINK"
+            connectionId      = aws_apigatewayv2_vpc_link.vpc_link.id
+            integrationTarget = aws_lb.alb.arn
           }
         }
         put = {
@@ -117,8 +123,9 @@ locals {
             type           = "HTTP_PROXY"
             httpMethod     = "PUT"
             uri            = "http://${aws_lb.alb.dns_name}/users/{user_id}"
-            connectionType = "VPC_LINK"
-            connectionId   = aws_apigatewayv2_vpc_link.vpc_link.id
+            connectionType    = "VPC_LINK"
+            connectionId      = aws_apigatewayv2_vpc_link.vpc_link.id
+            integrationTarget = aws_lb.alb.arn
           }
         }
         delete = {
@@ -130,8 +137,9 @@ locals {
             type           = "HTTP_PROXY"
             httpMethod     = "DELETE"
             uri            = "http://${aws_lb.alb.dns_name}/users/{user_id}"
-            connectionType = "VPC_LINK"
-            connectionId   = aws_apigatewayv2_vpc_link.vpc_link.id
+            connectionType    = "VPC_LINK"
+            connectionId      = aws_apigatewayv2_vpc_link.vpc_link.id
+            integrationTarget = aws_lb.alb.arn
           }
         }
       }
