@@ -162,6 +162,8 @@ resource "aws_iam_role_policy" "github_nonprod_deploy" {
           "iam:CreateOpenIDConnectProvider",
           "iam:DeleteOpenIDConnectProvider",
           "iam:GetOpenIDConnectProvider",
+          "iam:TagOpenIDConnectProvider",
+          "iam:UntagOpenIDConnectProvider",
           "iam:TagRole",
           "iam:UntagRole",
           "iam:CreateInstanceProfile",
