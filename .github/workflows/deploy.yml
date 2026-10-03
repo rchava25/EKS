@@ -68,10 +68,14 @@ jobs:
 
       - name: Terraform Init
         run: |
-          terraform -chdir=${{ env.TF_DIR }} init \
-            -backend-config="key=${{ needs.env-config.outputs.env }}/terraform.tfstate" \
-            -backend-config="bucket=${{ secrets.TF_STATE_BUCKET }}" \
-            -backend-config="region=${{ env.AWS_REGION }}"
+          if [ -n "${{ secrets.TF_STATE_BUCKET }}" ]; then
+            terraform -chdir=${{ env.TF_DIR }} init \
+              -backend-config="key=${{ needs.env-config.outputs.env }}/terraform.tfstate" \
+              -backend-config="bucket=${{ secrets.TF_STATE_BUCKET }}" \
+              -backend-config="region=${{ env.AWS_REGION }}"
+          else
+            terraform -chdir=${{ env.TF_DIR }} init -backend=false
+          fi
 
       # Phase 1 — create EKS cluster (kubernetes provider not yet usable)
       - name: Terraform Apply Phase 1 (EKS)
@@ -273,10 +277,14 @@ jobs:
 
       - name: Terraform Init
         run: |
-          terraform -chdir=${{ env.TF_DIR }} init \
-            -backend-config="key=${{ needs.env-config.outputs.env }}/terraform.tfstate" \
-            -backend-config="bucket=${{ secrets.TF_STATE_BUCKET }}" \
-            -backend-config="region=${{ env.AWS_REGION }}"
+          if [ -n "${{ secrets.TF_STATE_BUCKET }}" ]; then
+            terraform -chdir=${{ env.TF_DIR }} init \
+              -backend-config="key=${{ needs.env-config.outputs.env }}/terraform.tfstate" \
+              -backend-config="bucket=${{ secrets.TF_STATE_BUCKET }}" \
+              -backend-config="region=${{ env.AWS_REGION }}"
+          else
+            terraform -chdir=${{ env.TF_DIR }} init -backend=false
+          fi
 
       - name: Terraform Destroy (MR env)
         run: |
