@@ -112,6 +112,9 @@ locals {
             connectionType    = "VPC_LINK"
             connectionId      = aws_apigatewayv2_vpc_link.vpc_link.id
             integrationTarget = aws_lb.alb.arn
+            requestParameters = {
+              "integration.request.path.user_id" = "method.request.path.user_id"
+            }
           }
         }
         put = {
@@ -126,6 +129,9 @@ locals {
             connectionType    = "VPC_LINK"
             connectionId      = aws_apigatewayv2_vpc_link.vpc_link.id
             integrationTarget = aws_lb.alb.arn
+            requestParameters = {
+              "integration.request.path.user_id" = "method.request.path.user_id"
+            }
           }
         }
         delete = {
@@ -140,6 +146,9 @@ locals {
             connectionType    = "VPC_LINK"
             connectionId      = aws_apigatewayv2_vpc_link.vpc_link.id
             integrationTarget = aws_lb.alb.arn
+            requestParameters = {
+              "integration.request.path.user_id" = "method.request.path.user_id"
+            }
           }
         }
       }
