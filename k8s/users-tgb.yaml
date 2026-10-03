@@ -1,0 +1,9 @@
+apiVersion: elbv2.k8s.aws/v1beta1
+kind: TargetGroupBinding
+metadata:
+  name: users-service-tgb
+spec:
+  serviceRef:
+    name: users-service
+    port: 8080
+  targetGroupARN: USERS_TG_ARN

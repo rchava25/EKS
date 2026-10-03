@@ -17,7 +17,7 @@ resource "null_resource" "authorizer_build" {
     command = <<-EOT
       rm -rf "${local.authorizer_build}"
       mkdir -p "${local.authorizer_build}"
-      pip install -q -r "${local.authorizer_src}/requirements.txt" \
+      python3 -m pip install -q -r "${local.authorizer_src}/requirements.txt" \
         -t "${local.authorizer_build}"
       cp "${local.authorizer_src}/lambda_authorizer.py" "${local.authorizer_build}/"
       cd "${local.authorizer_build}" && zip -q -r "${local.authorizer_zip_path}" .

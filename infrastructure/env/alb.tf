@@ -129,6 +129,17 @@ resource "aws_lb_listener_rule" "users" {
   }
 }
 
+# Allow ALB to reach pods on port 8080 — required for ALB target_type=ip
+resource "aws_security_group_rule" "eks_from_alb" {
+  type                     = "ingress"
+  from_port                = 8080
+  to_port                  = 8080
+  protocol                 = "tcp"
+  security_group_id        = aws_eks_cluster.main.vpc_config[0].cluster_security_group_id
+  source_security_group_id = aws_security_group.alb.id
+  description              = "ALB to pods on port 8080"
+}
+
 output "alb_arn" {
   description = "ALB ARN"
   value       = aws_lb.alb.arn

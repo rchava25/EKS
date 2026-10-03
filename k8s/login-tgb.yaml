@@ -1,0 +1,9 @@
+apiVersion: elbv2.k8s.aws/v1beta1
+kind: TargetGroupBinding
+metadata:
+  name: login-service-tgb
+spec:
+  serviceRef:
+    name: login-service
+    port: 8080
+  targetGroupARN: LOGIN_TG_ARN

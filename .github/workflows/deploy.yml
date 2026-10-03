@@ -190,6 +190,28 @@ jobs:
           kubectl rollout status deployment/login-service -n "${NS}" --timeout=5m
           kubectl rollout status deployment/users-service -n "${NS}" --timeout=5m
 
+      - name: Apply TargetGroupBindings
+        run: |
+          NS="anycompany-users-${{ needs.env-config.outputs.env }}"
+          PREFIX="anycompany-users-${{ needs.env-config.outputs.env }}"
+
+          LOGIN_TG_ARN=$(aws elbv2 describe-target-groups --region ${{ env.AWS_REGION }} \
+            --names "${PREFIX}-login-tg" \
+            --query 'TargetGroups[0].TargetGroupArn' --output text)
+          USERS_TG_ARN=$(aws elbv2 describe-target-groups --region ${{ env.AWS_REGION }} \
+            --names "${PREFIX}-users-tg" \
+            --query 'TargetGroups[0].TargetGroupArn' --output text)
+
+          # Wait for LBC CRD to be available before applying TargetGroupBindings
+          for i in $(seq 1 24); do
+            kubectl get crd targetgroupbindings.elbv2.k8s.aws &>/dev/null && break
+            echo "Waiting for TargetGroupBinding CRD... ($i/24)"
+            sleep 5
+          done
+
+          sed "s|LOGIN_TG_ARN|${LOGIN_TG_ARN}|g" k8s/login-tgb.yaml | kubectl apply -n "${NS}" -f -
+          sed "s|USERS_TG_ARN|${USERS_TG_ARN}|g" k8s/users-tgb.yaml | kubectl apply -n "${NS}" -f -
+
   # ── Check whether preprod credentials are configured ─────────────────────
   check-preprod:
     needs: app
