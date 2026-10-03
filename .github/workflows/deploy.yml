@@ -80,6 +80,41 @@ jobs:
             terraform -chdir=${{ env.TF_DIR }} init -reconfigure
           fi
 
+      # Import pre-existing AWS resources into local state to avoid
+      # "already exists" errors on runners that start with empty state.
+      # Each import is idempotent — it no-ops if the resource is already in state.
+      - name: Import existing resources
+        run: |
+          ENV="${{ needs.env-config.outputs.env }}"
+          PREFIX="anycompany-users-${ENV}"
+          ACCOUNT_ID=$(aws sts get-caller-identity --query Account --output text)
+          REGION="${{ env.AWS_REGION }}"
+
+          tf_import() {
+            terraform -chdir=${{ env.TF_DIR }} import \
+              -var-file=${{ needs.env-config.outputs.tfvars_file }} \
+              -var="env=${ENV}" "$1" "$2" 2>&1 | grep -v "^$" || true
+          }
+
+          # DynamoDB table
+          aws dynamodb describe-table --table-name "${PREFIX}-users" --region ${REGION} \
+            &>/dev/null && tf_import aws_dynamodb_table.users "${PREFIX}-users" || true
+
+          # ECR repos
+          aws ecr describe-repositories --repository-names anycompany-login-service \
+            --region ${REGION} &>/dev/null && \
+            tf_import "aws_ecr_repository.login_service[0]" \
+              "arn:aws:ecr:${REGION}:${ACCOUNT_ID}:repository/anycompany-login-service" || true
+          aws ecr describe-repositories --repository-names anycompany-users-service \
+            --region ${REGION} &>/dev/null && \
+            tf_import "aws_ecr_repository.users_service[0]" \
+              "arn:aws:ecr:${REGION}:${ACCOUNT_ID}:repository/anycompany-users-service" || true
+
+          # Cognito
+          POOL_ID=$(aws cognito-idp list-user-pools --max-results 10 \
+            --query "UserPools[?Name=='${PREFIX}-pool'].Id" --output text 2>/dev/null || echo "")
+          [ -n "${POOL_ID}" ] && tf_import aws_cognito_user_pool.pool "${POOL_ID}" || true
+
       # Phase 1 — create EKS cluster (kubernetes provider not yet usable)
       - name: Terraform Apply Phase 1 (EKS)
         run: |
