@@ -112,6 +112,9 @@ resource "aws_iam_role_policy" "github_nonprod_deploy" {
           "ecr:UntagResource",
           "ecr:DeleteRepository",
           "ecr:ListTagsForResource",
+          "ecr:GetLifecyclePolicy",
+          "ecr:BatchDeleteImage",
+          "ecr:DescribeImages",
         ]
         Resource = "*"
       },
