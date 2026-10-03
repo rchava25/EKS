@@ -1,0 +1,290 @@
+name: Deploy Users Service
+
+on:
+  push:
+    branches: [main, "mr-*"]
+  pull_request:
+    types: [opened, synchronize, closed]
+
+env:
+  AWS_REGION: us-east-1
+  TF_DIR: infrastructure/env
+
+permissions:
+  id-token: write
+  contents: read
+
+jobs:
+  # ──────────────────────────────────────────────────────────────
+  # Resolve which environment and AWS account role to use
+  # ──────────────────────────────────────────────────────────────
+  env-config:
+    runs-on: ubuntu-latest
+    outputs:
+      env: ${{ steps.set.outputs.env }}
+      role_arn: ${{ steps.set.outputs.role_arn }}
+      tfvars_file: ${{ steps.set.outputs.tfvars_file }}
+      require_approval: ${{ steps.set.outputs.require_approval }}
+    steps:
+      - id: set
+        run: |
+          if [[ "${{ github.ref }}" == "refs/heads/main" ]]; then
+            echo "env=dev"               >> $GITHUB_OUTPUT
+            echo "role_arn=${{ secrets.NONPROD_DEPLOY_ROLE_ARN }}" >> $GITHUB_OUTPUT
+            echo "tfvars_file=environments/dev.tfvars" >> $GITHUB_OUTPUT
+            echo "require_approval=false" >> $GITHUB_OUTPUT
+          elif [[ "${{ github.head_ref }}" =~ ^mr- ]] || [[ "${{ github.ref }}" =~ refs/heads/mr- ]]; then
+            MR_NUM="${{ github.event.pull_request.number }}"
+            echo "env=mr-${MR_NUM}"     >> $GITHUB_OUTPUT
+            echo "role_arn=${{ secrets.NONPROD_DEPLOY_ROLE_ARN }}" >> $GITHUB_OUTPUT
+            echo "tfvars_file=environments/mr.tfvars" >> $GITHUB_OUTPUT
+            echo "require_approval=false" >> $GITHUB_OUTPUT
+          else
+            echo "env=dev"               >> $GITHUB_OUTPUT
+            echo "role_arn=${{ secrets.NONPROD_DEPLOY_ROLE_ARN }}" >> $GITHUB_OUTPUT
+            echo "tfvars_file=environments/dev.tfvars" >> $GITHUB_OUTPUT
+            echo "require_approval=false" >> $GITHUB_OUTPUT
+          fi
+
+  # ──────────────────────────────────────────────────────────────
+  # Infrastructure path — runs when infrastructure/** changes
+  # ──────────────────────────────────────────────────────────────
+  infra:
+    needs: env-config
+    if: >
+      github.event.action != 'closed' &&
+      (contains(github.event.head_commit.modified, 'infrastructure/') ||
+       contains(github.event.commits[0].modified, 'infrastructure/') ||
+       github.event_name == 'pull_request')
+    runs-on: ubuntu-latest
+    environment: ${{ needs.env-config.outputs.env }}
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: aws-actions/configure-aws-credentials@v4
+        with:
+          role-to-assume: ${{ needs.env-config.outputs.role_arn }}
+          aws-region: ${{ env.AWS_REGION }}
+
+      - uses: hashicorp/setup-terraform@v3
+        with:
+          terraform_version: "~1.7"
+
+      - name: Terraform Init
+        run: |
+          terraform -chdir=${{ env.TF_DIR }} init \
+            -backend-config="key=${{ needs.env-config.outputs.env }}/terraform.tfstate" \
+            -backend-config="bucket=${{ secrets.TF_STATE_BUCKET }}" \
+            -backend-config="region=${{ env.AWS_REGION }}"
+
+      # Phase 1 — create EKS cluster (kubernetes provider not yet usable)
+      - name: Terraform Apply Phase 1 (EKS)
+        run: |
+          terraform -chdir=${{ env.TF_DIR }} apply \
+            -var-file=${{ needs.env-config.outputs.tfvars_file }} \
+            -var="env=${{ needs.env-config.outputs.env }}" \
+            -target=aws_eks_cluster.cluster \
+            -target=aws_eks_node_group.nodes \
+            -target=aws_iam_openid_connect_provider.oidc \
+            -auto-approve
+
+      # Phase 2 — full apply with EKS outputs available for kubernetes provider
+      - name: Terraform Apply Phase 2 (All)
+        run: |
+          EKS_ENDPOINT=$(terraform -chdir=${{ env.TF_DIR }} output -raw eks_cluster_endpoint)
+          EKS_CA=$(terraform -chdir=${{ env.TF_DIR }} output -raw eks_cluster_ca_cert)
+          terraform -chdir=${{ env.TF_DIR }} apply \
+            -var-file=${{ needs.env-config.outputs.tfvars_file }} \
+            -var="env=${{ needs.env-config.outputs.env }}" \
+            -var="eks_cluster_endpoint=${EKS_ENDPOINT}" \
+            -var="eks_cluster_ca_cert=${EKS_CA}" \
+            -auto-approve
+
+  # ──────────────────────────────────────────────────────────────
+  # Application path — runs when src/** changes
+  # ──────────────────────────────────────────────────────────────
+  app:
+    needs: [env-config, infra]
+    if: always() && github.event.action != 'closed' && needs.env-config.result == 'success'
+    runs-on: ubuntu-latest
+    environment: ${{ needs.env-config.outputs.env }}
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: aws-actions/configure-aws-credentials@v4
+        with:
+          role-to-assume: ${{ needs.env-config.outputs.role_arn }}
+          aws-region: ${{ env.AWS_REGION }}
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.10"
+
+      - name: Install dependencies
+        run: pip install fastapi uvicorn boto3 "pydantic[email]" moto pytest httpx python-jose cryptography
+
+      - name: Run unit tests
+        run: pytest tests/unit/ -v --tb=short
+        env:
+          TABLE_NAME: test-users
+          AWS_REGION: ${{ env.AWS_REGION }}
+          COGNITO_CLIENT_ID: test-client
+          COGNITO_USER_POOL_ID: us-east-1_test
+
+      - name: Log in to ECR
+        id: ecr-login
+        uses: aws-actions/amazon-ecr-login@v2
+
+      - name: Get ECR URLs
+        id: ecr-urls
+        run: |
+          terraform -chdir=${{ env.TF_DIR }} init -backend=false -reconfigure 2>/dev/null || true
+          LOGIN_ECR=$(aws ecr describe-repositories --repository-names anycompany-login-service \
+            --query 'repositories[0].repositoryUri' --output text)
+          USERS_ECR=$(aws ecr describe-repositories --repository-names anycompany-users-service \
+            --query 'repositories[0].repositoryUri' --output text)
+          echo "login_ecr=${LOGIN_ECR}" >> $GITHUB_OUTPUT
+          echo "users_ecr=${USERS_ECR}" >> $GITHUB_OUTPUT
+
+      - name: Build and push login-service
+        run: |
+          ENV=${{ needs.env-config.outputs.env }}
+          SHA=${{ github.sha }}
+          TAG="${{ steps.ecr-urls.outputs.login_ecr }}:${ENV}-${SHA:0:8}"
+          docker build -t $TAG src/login/
+          docker push $TAG
+          echo "LOGIN_TAG=${TAG}" >> $GITHUB_ENV
+
+      - name: Build and push users-service
+        run: |
+          ENV=${{ needs.env-config.outputs.env }}
+          SHA=${{ github.sha }}
+          TAG="${{ steps.ecr-urls.outputs.users_ecr }}:${ENV}-${SHA:0:8}"
+          docker build -t $TAG src/users/
+          docker push $TAG
+          echo "USERS_TAG=${TAG}" >> $GITHUB_ENV
+
+      - name: Configure kubectl
+        run: |
+          aws eks update-kubeconfig \
+            --name anycompany-users-${{ needs.env-config.outputs.env }}-cluster \
+            --region ${{ env.AWS_REGION }}
+
+      - name: Deploy login-service
+        run: |
+          NS="anycompany-users-${{ needs.env-config.outputs.env }}"
+          kubectl set image deployment/login-service \
+            login-service=${{ env.LOGIN_TAG }} -n $NS
+          kubectl rollout status deployment/login-service -n $NS --timeout=5m
+
+      - name: Deploy users-service
+        run: |
+          NS="anycompany-users-${{ needs.env-config.outputs.env }}"
+          kubectl set image deployment/users-service \
+            users-service=${{ env.USERS_TAG }} -n $NS
+          kubectl rollout status deployment/users-service -n $NS --timeout=5m
+
+      - name: Apply K8s manifests (first deploy only)
+        run: |
+          NS="anycompany-users-${{ needs.env-config.outputs.env }}"
+          # Substitute IMAGE_TAG placeholders then apply; kubectl set image is idempotent
+          sed "s|IMAGE_TAG|${{ env.LOGIN_TAG }}|g" k8s/login-deployment.yaml | kubectl apply -n $NS -f -
+          sed "s|IMAGE_TAG|${{ env.USERS_TAG }}|g" k8s/users-deployment.yaml | kubectl apply -n $NS -f -
+          kubectl apply -n $NS -f k8s/login-service.yaml
+          kubectl apply -n $NS -f k8s/users-service.yaml
+
+  # ──────────────────────────────────────────────────────────────
+  # Preprod promotion — manual gate, triggered after dev passes
+  # ──────────────────────────────────────────────────────────────
+  promote-preprod:
+    needs: app
+    if: github.ref == 'refs/heads/main' && needs.app.result == 'success'
+    runs-on: ubuntu-latest
+    environment:
+      name: preprod
+      # Requires a GitHub Environment protection rule with required reviewers
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: aws-actions/configure-aws-credentials@v4
+        with:
+          role-to-assume: ${{ secrets.PREPROD_DEPLOY_ROLE_ARN }}
+          aws-region: ${{ env.AWS_REGION }}
+
+      - uses: hashicorp/setup-terraform@v3
+        with:
+          terraform_version: "~1.7"
+
+      - name: Terraform Init (preprod)
+        run: |
+          terraform -chdir=${{ env.TF_DIR }} init \
+            -backend-config="key=preprod/terraform.tfstate" \
+            -backend-config="bucket=${{ secrets.PREPROD_TF_STATE_BUCKET }}" \
+            -backend-config="region=${{ env.AWS_REGION }}"
+
+      - name: Terraform Apply (preprod)
+        run: |
+          EKS_ENDPOINT=$(terraform -chdir=${{ env.TF_DIR }} output -raw eks_cluster_endpoint 2>/dev/null || echo "")
+          EKS_CA=$(terraform -chdir=${{ env.TF_DIR }} output -raw eks_cluster_ca_cert 2>/dev/null || echo "")
+          terraform -chdir=${{ env.TF_DIR }} apply \
+            -var-file=environments/preprod.tfvars \
+            -var="env=preprod" \
+            -var="eks_cluster_endpoint=${EKS_ENDPOINT}" \
+            -var="eks_cluster_ca_cert=${EKS_CA}" \
+            -auto-approve
+
+      - name: Configure kubectl (preprod)
+        run: aws eks update-kubeconfig --name anycompany-users-preprod-cluster --region ${{ env.AWS_REGION }}
+
+      - name: Deploy to preprod
+        run: |
+          SHA=${{ github.sha }}
+          LOGIN_ECR=$(aws ecr describe-repositories --repository-names anycompany-login-service \
+            --query 'repositories[0].repositoryUri' --output text)
+          USERS_ECR=$(aws ecr describe-repositories --repository-names anycompany-users-service \
+            --query 'repositories[0].repositoryUri' --output text)
+          # Re-tag the dev image as preprod
+          docker pull ${LOGIN_ECR}:dev-${SHA:0:8}
+          docker tag  ${LOGIN_ECR}:dev-${SHA:0:8} ${LOGIN_ECR}:preprod-${SHA:0:8}
+          docker push ${LOGIN_ECR}:preprod-${SHA:0:8}
+          docker pull ${USERS_ECR}:dev-${SHA:0:8}
+          docker tag  ${USERS_ECR}:dev-${SHA:0:8} ${USERS_ECR}:preprod-${SHA:0:8}
+          docker push ${USERS_ECR}:preprod-${SHA:0:8}
+          kubectl set image deployment/login-service login-service=${LOGIN_ECR}:preprod-${SHA:0:8} -n anycompany-users-preprod
+          kubectl set image deployment/users-service users-service=${USERS_ECR}:preprod-${SHA:0:8} -n anycompany-users-preprod
+          kubectl rollout status deployment/login-service -n anycompany-users-preprod --timeout=5m
+          kubectl rollout status deployment/users-service -n anycompany-users-preprod --timeout=5m
+
+  # ──────────────────────────────────────────────────────────────
+  # MR teardown — destroy ephemeral env when PR is closed/merged
+  # ──────────────────────────────────────────────────────────────
+  teardown-mr:
+    needs: env-config
+    if: github.event_name == 'pull_request' && github.event.action == 'closed'
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: aws-actions/configure-aws-credentials@v4
+        with:
+          role-to-assume: ${{ secrets.NONPROD_DEPLOY_ROLE_ARN }}
+          aws-region: ${{ env.AWS_REGION }}
+
+      - uses: hashicorp/setup-terraform@v3
+        with:
+          terraform_version: "~1.7"
+
+      - name: Terraform Init
+        run: |
+          terraform -chdir=${{ env.TF_DIR }} init \
+            -backend-config="key=${{ needs.env-config.outputs.env }}/terraform.tfstate" \
+            -backend-config="bucket=${{ secrets.TF_STATE_BUCKET }}" \
+            -backend-config="region=${{ env.AWS_REGION }}"
+
+      - name: Terraform Destroy (MR env)
+        run: |
+          terraform -chdir=${{ env.TF_DIR }} destroy \
+            -var-file=environments/mr.tfvars \
+            -var="env=${{ needs.env-config.outputs.env }}" \
+            -auto-approve
