@@ -9,13 +9,17 @@ terraform {
       source  = "hashicorp/kubernetes"
       version = "~> 2.0"
     }
-    archive = {
-      source  = "hashicorp/archive"
-      version = "~> 2.0"
-    }
-    tls = {
+tls = {
       source  = "hashicorp/tls"
       version = "~> 4.0"
+    }
+    null = {
+      source  = "hashicorp/null"
+      version = "~> 3.0"
+    }
+    local = {
+      source  = "hashicorp/local"
+      version = "~> 2.0"
     }
   }
   # Bucket and region supplied via -backend-config at init time.
