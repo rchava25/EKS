@@ -63,7 +63,7 @@ jobs:
 
       - uses: aws-actions/configure-aws-credentials@v4
         with:
-          role-to-assume: ${{ needs.env-config.outputs.role_arn }}
+          role-to-assume: ${{ secrets.NONPROD_DEPLOY_ROLE_ARN }}
           aws-region: ${{ env.AWS_REGION }}
 
       - uses: hashicorp/setup-terraform@v3
@@ -113,7 +113,7 @@ jobs:
 
       - uses: aws-actions/configure-aws-credentials@v4
         with:
-          role-to-assume: ${{ needs.env-config.outputs.role_arn }}
+          role-to-assume: ${{ secrets.NONPROD_DEPLOY_ROLE_ARN }}
           aws-region: ${{ env.AWS_REGION }}
 
       - name: Set up Python
