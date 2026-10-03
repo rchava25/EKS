@@ -1,6 +1,4 @@
 locals {
-  # NLB routes traffic by listener port — port 80 → login-service, port 8080 → users-service.
-  # API Gateway VPC Link connections use the NLB DNS name with explicit port for users routes.
   openapi_body = jsonencode({
     openapi = "3.0.1"
     info = {
@@ -32,9 +30,9 @@ locals {
           "x-amazon-apigateway-integration" = {
             type           = "HTTP_PROXY"
             httpMethod     = "POST"
-            uri            = "http://${aws_lb.nlb.dns_name}/auth/login"
+            uri            = "http://${aws_lb.alb.dns_name}/auth/login"
             connectionType = "VPC_LINK"
-            connectionId   = aws_api_gateway_vpc_link.vpc_link.id
+            connectionId   = aws_apigatewayv2_vpc_link.vpc_link.id
           }
         }
       }
@@ -46,9 +44,9 @@ locals {
           "x-amazon-apigateway-integration" = {
             type           = "HTTP_PROXY"
             httpMethod     = "POST"
-            uri            = "http://${aws_lb.nlb.dns_name}/auth/refresh"
+            uri            = "http://${aws_lb.alb.dns_name}/auth/refresh"
             connectionType = "VPC_LINK"
-            connectionId   = aws_api_gateway_vpc_link.vpc_link.id
+            connectionId   = aws_apigatewayv2_vpc_link.vpc_link.id
           }
         }
       }
@@ -60,9 +58,9 @@ locals {
           "x-amazon-apigateway-integration" = {
             type           = "HTTP_PROXY"
             httpMethod     = "POST"
-            uri            = "http://${aws_lb.nlb.dns_name}/auth/logout"
+            uri            = "http://${aws_lb.alb.dns_name}/auth/logout"
             connectionType = "VPC_LINK"
-            connectionId   = aws_api_gateway_vpc_link.vpc_link.id
+            connectionId   = aws_apigatewayv2_vpc_link.vpc_link.id
           }
         }
       }
@@ -78,9 +76,9 @@ locals {
           "x-amazon-apigateway-integration" = {
             type           = "HTTP_PROXY"
             httpMethod     = "GET"
-            uri            = "http://${aws_lb.nlb.dns_name}:8080/users"
+            uri            = "http://${aws_lb.alb.dns_name}/users"
             connectionType = "VPC_LINK"
-            connectionId   = aws_api_gateway_vpc_link.vpc_link.id
+            connectionId   = aws_apigatewayv2_vpc_link.vpc_link.id
           }
         }
         post = {
@@ -90,9 +88,9 @@ locals {
           "x-amazon-apigateway-integration" = {
             type           = "HTTP_PROXY"
             httpMethod     = "POST"
-            uri            = "http://${aws_lb.nlb.dns_name}:8080/users"
+            uri            = "http://${aws_lb.alb.dns_name}/users"
             connectionType = "VPC_LINK"
-            connectionId   = aws_api_gateway_vpc_link.vpc_link.id
+            connectionId   = aws_apigatewayv2_vpc_link.vpc_link.id
           }
         }
       }
@@ -105,9 +103,9 @@ locals {
           "x-amazon-apigateway-integration" = {
             type           = "HTTP_PROXY"
             httpMethod     = "GET"
-            uri            = "http://${aws_lb.nlb.dns_name}:8080/users/{user_id}"
+            uri            = "http://${aws_lb.alb.dns_name}/users/{user_id}"
             connectionType = "VPC_LINK"
-            connectionId   = aws_api_gateway_vpc_link.vpc_link.id
+            connectionId   = aws_apigatewayv2_vpc_link.vpc_link.id
           }
         }
         put = {
@@ -118,9 +116,9 @@ locals {
           "x-amazon-apigateway-integration" = {
             type           = "HTTP_PROXY"
             httpMethod     = "PUT"
-            uri            = "http://${aws_lb.nlb.dns_name}:8080/users/{user_id}"
+            uri            = "http://${aws_lb.alb.dns_name}/users/{user_id}"
             connectionType = "VPC_LINK"
-            connectionId   = aws_api_gateway_vpc_link.vpc_link.id
+            connectionId   = aws_apigatewayv2_vpc_link.vpc_link.id
           }
         }
         delete = {
@@ -131,9 +129,9 @@ locals {
           "x-amazon-apigateway-integration" = {
             type           = "HTTP_PROXY"
             httpMethod     = "DELETE"
-            uri            = "http://${aws_lb.nlb.dns_name}:8080/users/{user_id}"
+            uri            = "http://${aws_lb.alb.dns_name}/users/{user_id}"
             connectionType = "VPC_LINK"
-            connectionId   = aws_api_gateway_vpc_link.vpc_link.id
+            connectionId   = aws_apigatewayv2_vpc_link.vpc_link.id
           }
         }
       }
