@@ -32,6 +32,12 @@ variable "vpc_cidr" {
   default     = "10.2.0.0/16"
 }
 
+variable "kubernetes_version" {
+  description = "EKS Kubernetes version. Increment one minor version at a time — AWS rejects multi-version skips."
+  type        = string
+  default     = "1.31"
+}
+
 variable "eks_cluster_endpoint" {
   description = "EKS cluster API endpoint — empty on first apply; populated by CI from Terraform outputs for second apply that creates kubernetes resources"
   type        = string

@@ -29,7 +29,7 @@ resource "aws_iam_role_policy_attachment" "eks_cluster_policy" {
 resource "aws_eks_cluster" "main" {
   name     = "${local.prefix}-cluster"
   role_arn = aws_iam_role.eks_cluster.arn
-  version  = "1.31"
+  version  = var.kubernetes_version
 
   vpc_config {
     subnet_ids              = local.private_subnet_ids
