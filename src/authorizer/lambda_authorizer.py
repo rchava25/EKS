@@ -62,8 +62,14 @@ def handler(event, context):
             options={"verify_aud": False},
         )
 
-        logger.info("Token authorized for: %s", event.get("methodArn"))
-        return _generate_policy("user", "Allow", event["methodArn"])
+        # Wildcard over the whole stage so the cached policy covers all methods.
+        # Scoping to methodArn causes cached Allow(POST) to reject GET, etc.
+        method_arn = event["methodArn"]
+        arn_parts = method_arn.split(":")
+        api_stage = "/".join(arn_parts[5].split("/")[:2])
+        wildcard_arn = ":".join(arn_parts[:5]) + ":" + api_stage + "/*"
+        logger.info("Token authorized, granting access to: %s", wildcard_arn)
+        return _generate_policy("user", "Allow", wildcard_arn)
 
     except (JWTError, ExpiredSignatureError) as exc:
         logger.warning("JWT validation failed: %s", exc)
