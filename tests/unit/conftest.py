@@ -14,9 +14,10 @@ os.environ["COGNITO_JWKS_URL"] = (
     "https://cognito-idp.us-east-1.amazonaws.com/us-east-1_test/.well-known/jwks.json"
 )
 
-_LOGIN_SRC = "/workshop/src/login"
-_USERS_SRC = "/workshop/src/users"
-_AUTHORIZER_SRC = "/workshop/src/authorizer"
+_REPO_ROOT = os.path.abspath(os.path.join(os.path.dirname(__file__), "../.."))
+_LOGIN_SRC = os.path.join(_REPO_ROOT, "src/login")
+_USERS_SRC = os.path.join(_REPO_ROOT, "src/users")
+_AUTHORIZER_SRC = os.path.join(_REPO_ROOT, "src/authorizer")
 
 # Add authorizer src at module load time so test_authorizer.py can import lambda_authorizer
 if _AUTHORIZER_SRC not in sys.path:
