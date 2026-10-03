@@ -2,25 +2,29 @@ resource "aws_security_group" "alb" {
   name   = "${local.prefix}-alb-sg"
   vpc_id = local.vpc_id
 
-  ingress {
-    from_port       = 80
-    to_port         = 80
-    protocol        = "tcp"
-    security_groups = [aws_security_group.vpc_link.id]
-  }
-
-  egress {
-    from_port   = 0
-    to_port     = 0
-    protocol    = "-1"
-    cidr_blocks = ["0.0.0.0/0"]
-  }
-
   tags = {
     Name    = "${local.prefix}-alb-sg"
     Project = "anycompany-users"
     Env     = var.env
   }
+}
+
+resource "aws_security_group_rule" "alb_ingress_from_vpc_link" {
+  type                     = "ingress"
+  from_port                = 80
+  to_port                  = 80
+  protocol                 = "tcp"
+  security_group_id        = aws_security_group.alb.id
+  source_security_group_id = aws_security_group.vpc_link.id
+}
+
+resource "aws_security_group_rule" "alb_egress_all" {
+  type              = "egress"
+  from_port         = 0
+  to_port           = 0
+  protocol          = "-1"
+  cidr_blocks       = ["0.0.0.0/0"]
+  security_group_id = aws_security_group.alb.id
 }
 
 resource "aws_lb" "alb" {
