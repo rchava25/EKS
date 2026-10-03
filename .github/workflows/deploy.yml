@@ -51,11 +51,7 @@ jobs:
   # ──────────────────────────────────────────────────────────────
   infra:
     needs: env-config
-    if: >
-      github.event.action != 'closed' &&
-      (contains(github.event.head_commit.modified, 'infrastructure/') ||
-       contains(github.event.commits[0].modified, 'infrastructure/') ||
-       github.event_name == 'pull_request')
+    if: github.event.action != 'closed'
     runs-on: ubuntu-latest
     environment: ${{ needs.env-config.outputs.env }}
     steps:
