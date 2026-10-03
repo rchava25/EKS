@@ -116,6 +116,7 @@ resource "aws_iam_role_policy" "github_nonprod_deploy" {
           "ecr:DeleteLifecyclePolicy",
           "ecr:BatchDeleteImage",
           "ecr:DescribeImages",
+          "ecr:PutImageTagMutability",
         ]
         Resource = "*"
       },
