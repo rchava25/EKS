@@ -5,5 +5,5 @@ metadata:
 spec:
   serviceRef:
     name: login-service
-    port: 8080
+    port: 80
   targetGroupARN: LOGIN_TG_ARN

@@ -5,5 +5,5 @@ metadata:
 spec:
   serviceRef:
     name: users-service
-    port: 8080
+    port: 80
   targetGroupARN: USERS_TG_ARN
