@@ -208,6 +208,27 @@ resource "aws_iam_role_policy" "github_nonprod_deploy" {
         Effect = "Allow"
         Action = ["ssm:GetParameter"]
         Resource = "*"
+      },
+      {
+        Sid    = "CloudControlAPI"
+        Effect = "Allow"
+        Action = [
+          "cloudformation:GetResource",
+          "cloudformation:CreateResource",
+          "cloudformation:UpdateResource",
+          "cloudformation:DeleteResource",
+          "cloudformation:ListResources",
+          "cloudformation:GetResourceRequestStatus",
+          "cloudformation:CancelResourceRequest",
+          "cloudformation:ListResourceRequests",
+        ]
+        Resource = "*"
+      },
+      {
+        Sid    = "DevOpsAgent"
+        Effect = "Allow"
+        Action = ["aidevops:*"]
+        Resource = "*"
       }
     ]
   })
