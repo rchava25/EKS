@@ -50,3 +50,9 @@ variable "eks_cluster_ca_cert" {
   default     = ""
   sensitive   = true
 }
+
+variable "eks_admin_iam_arns" {
+  description = "List of IAM user/role ARNs to grant EKS cluster-admin access (console, ops, etc.)"
+  type        = list(string)
+  default     = []
+}

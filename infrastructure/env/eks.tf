@@ -120,6 +120,32 @@ resource "aws_eks_node_group" "main" {
   }
 }
 
+# ── EKS Access Entries — console / ops principals ────────────────────────────
+# Grant cluster-admin to any IAM ARNs passed via eks_admin_iam_arns.
+# Use for AWS console users, ops roles, and CI roles that need kubectl access.
+
+resource "aws_eks_access_entry" "admins" {
+  for_each = toset(var.eks_admin_iam_arns)
+
+  cluster_name  = aws_eks_cluster.main.name
+  principal_arn = each.value
+  type          = "STANDARD"
+}
+
+resource "aws_eks_access_policy_association" "admins" {
+  for_each = toset(var.eks_admin_iam_arns)
+
+  cluster_name  = aws_eks_cluster.main.name
+  principal_arn = each.value
+  policy_arn    = "arn:aws:eks::aws:cluster-access-policy/AmazonEKSClusterAdminPolicy"
+
+  access_scope {
+    type = "cluster"
+  }
+
+  depends_on = [aws_eks_access_entry.admins]
+}
+
 # ── Pod Identity Agent addon ──────────────────────────────────────────────────
 # Replaces IRSA. No per-cluster OIDC provider needed.
 # Pod Identity agent runs as a DaemonSet and intercepts credential requests
