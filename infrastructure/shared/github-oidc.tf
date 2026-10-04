@@ -54,11 +54,14 @@ data "aws_iam_policy_document" "github_oidc_trust" {
       values   = ["sts.amazonaws.com"]
     }
 
-    # Allow any branch / PR / environment in this repo
+    # Allow any branch / PR / environment in this repo.
+    # The sub claim format is repo:<org>/<repo>:<context> where context is
+    # ref:refs/heads/<branch>, environment:<env>, or pull_request.
+    # The trailing :* is required — without it no token ever matches.
     condition {
       test     = "StringLike"
       variable = "token.actions.githubusercontent.com:sub"
-      values   = ["repo:rchava25*/EKS*"]
+      values   = ["repo:rchava25*/EKS*:*"]
     }
   }
 }
