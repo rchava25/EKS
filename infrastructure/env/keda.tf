@@ -27,5 +27,5 @@ resource "helm_release" "keda" {
     value = "256Mi"
   }
 
-  depends_on = [aws_eks_node_group.main, helm_release.lbc]
+  depends_on = [aws_eks_cluster.main]
 }

@@ -174,3 +174,83 @@ resource "aws_vpc_endpoint" "dynamodb" {
     Project = var.project
   }
 }
+
+# ── Interface VPC Endpoints — ECR, STS, Secrets Manager ──────────────────────
+# Eliminates NAT cost for image pulls and AWS API calls from pods.
+# ECR DKR: ~60-80% of NAT egress from EKS is Docker layer pulls.
+# STS: every Pod Identity credential refresh hits STS — kept inside VPC.
+# Secrets Manager: ESO polls every hour; keeps secrets traffic off NAT.
+
+resource "aws_security_group" "vpc_endpoints" {
+  name   = "${var.project}-nonprod-endpoints-sg"
+  vpc_id = aws_vpc.shared.id
+
+  ingress {
+    from_port   = 443
+    to_port     = 443
+    protocol    = "tcp"
+    cidr_blocks = [aws_vpc.shared.cidr_block]
+    description = "HTTPS from VPC"
+  }
+
+  tags = {
+    Name    = "${var.project}-nonprod-endpoints-sg"
+    Project = var.project
+  }
+}
+
+resource "aws_vpc_endpoint" "ecr_api" {
+  vpc_id              = aws_vpc.shared.id
+  service_name        = "com.amazonaws.${var.aws_region}.ecr.api"
+  vpc_endpoint_type   = "Interface"
+  subnet_ids          = [aws_subnet.private_a.id, aws_subnet.private_b.id]
+  security_group_ids  = [aws_security_group.vpc_endpoints.id]
+  private_dns_enabled = true
+
+  tags = {
+    Name    = "${var.project}-nonprod-ecr-api-endpoint"
+    Project = var.project
+  }
+}
+
+resource "aws_vpc_endpoint" "ecr_dkr" {
+  vpc_id              = aws_vpc.shared.id
+  service_name        = "com.amazonaws.${var.aws_region}.ecr.dkr"
+  vpc_endpoint_type   = "Interface"
+  subnet_ids          = [aws_subnet.private_a.id, aws_subnet.private_b.id]
+  security_group_ids  = [aws_security_group.vpc_endpoints.id]
+  private_dns_enabled = true
+
+  tags = {
+    Name    = "${var.project}-nonprod-ecr-dkr-endpoint"
+    Project = var.project
+  }
+}
+
+resource "aws_vpc_endpoint" "sts" {
+  vpc_id              = aws_vpc.shared.id
+  service_name        = "com.amazonaws.${var.aws_region}.sts"
+  vpc_endpoint_type   = "Interface"
+  subnet_ids          = [aws_subnet.private_a.id, aws_subnet.private_b.id]
+  security_group_ids  = [aws_security_group.vpc_endpoints.id]
+  private_dns_enabled = true
+
+  tags = {
+    Name    = "${var.project}-nonprod-sts-endpoint"
+    Project = var.project
+  }
+}
+
+resource "aws_vpc_endpoint" "secretsmanager" {
+  vpc_id              = aws_vpc.shared.id
+  service_name        = "com.amazonaws.${var.aws_region}.secretsmanager"
+  vpc_endpoint_type   = "Interface"
+  subnet_ids          = [aws_subnet.private_a.id, aws_subnet.private_b.id]
+  security_group_ids  = [aws_security_group.vpc_endpoints.id]
+  private_dns_enabled = true
+
+  tags = {
+    Name    = "${var.project}-nonprod-secretsmanager-endpoint"
+    Project = var.project
+  }
+}

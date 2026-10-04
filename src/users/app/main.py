@@ -1,9 +1,17 @@
 import logging
+import os
 import time
 
 from fastapi import FastAPI, Request
 from fastapi.exceptions import RequestValidationError
 from fastapi.middleware.cors import CORSMiddleware
+from opentelemetry import trace
+from opentelemetry.exporter.otlp.proto.grpc.trace_exporter import OTLPSpanExporter
+from opentelemetry.instrumentation.botocore import BotocoreInstrumentor
+from opentelemetry.instrumentation.fastapi import FastAPIInstrumentor
+from opentelemetry.sdk.resources import Resource
+from opentelemetry.sdk.trace import TracerProvider
+from opentelemetry.sdk.trace.export import BatchSpanProcessor
 
 from app.exceptions import (
     BadRequestError,
@@ -20,7 +28,24 @@ from app.routers import users
 logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger(__name__)
 
+# ── OpenTelemetry tracing ─────────────────────────────────────────────────────
+# Sends traces to the ADOT sidecar collector (localhost:4317).
+# The collector forwards to AWS X-Ray. Set OTEL_SDK_DISABLED=true to opt out.
+
+_resource = Resource.create({
+    "service.name": "users-service",
+    "deployment.environment": os.getenv("ENV", "dev"),
+})
+_provider = TracerProvider(resource=_resource)
+_otlp_endpoint = os.getenv("OTEL_EXPORTER_OTLP_ENDPOINT", "http://localhost:4317")
+_provider.add_span_processor(BatchSpanProcessor(OTLPSpanExporter(endpoint=_otlp_endpoint)))
+trace.set_tracer_provider(_provider)
+
+BotocoreInstrumentor().instrument()
+
 app = FastAPI(title="Users Service")
+
+FastAPIInstrumentor.instrument_app(app, tracer_provider=_provider)
 
 app.add_middleware(
     CORSMiddleware,

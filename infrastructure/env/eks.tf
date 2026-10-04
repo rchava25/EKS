@@ -19,40 +19,34 @@ resource "aws_iam_role" "eks_cluster" {
   }
 }
 
+# Base EKS cluster policy + Auto Mode policies for compute/storage/networking/LB.
 resource "aws_iam_role_policy_attachment" "eks_cluster_policy" {
   role       = aws_iam_role.eks_cluster.name
   policy_arn = "arn:aws:iam::aws:policy/AmazonEKSClusterPolicy"
 }
 
-# ── EKS Cluster ───────────────────────────────────────────────────────────────
-
-resource "aws_eks_cluster" "main" {
-  name                          = "${local.prefix}-cluster"
-  role_arn                      = aws_iam_role.eks_cluster.arn
-  version                       = var.kubernetes_version
-  bootstrap_self_managed_addons = false
-
-  access_config {
-    authentication_mode                         = "API"
-    bootstrap_cluster_creator_admin_permissions = true
-  }
-
-  vpc_config {
-    subnet_ids              = local.private_subnet_ids
-    endpoint_private_access = true
-    endpoint_public_access  = true
-  }
-
-  depends_on = [aws_iam_role_policy_attachment.eks_cluster_policy]
-
-  tags = {
-    Name    = "${local.prefix}-cluster"
-    Project = "anycompany-users"
-    Env     = var.env
-  }
+resource "aws_iam_role_policy_attachment" "eks_compute_policy" {
+  role       = aws_iam_role.eks_cluster.name
+  policy_arn = "arn:aws:iam::aws:policy/AmazonEKSComputePolicy"
 }
 
-# ── Node Group IAM Role ───────────────────────────────────────────────────────
+resource "aws_iam_role_policy_attachment" "eks_block_storage_policy" {
+  role       = aws_iam_role.eks_cluster.name
+  policy_arn = "arn:aws:iam::aws:policy/AmazonEKSBlockStoragePolicy"
+}
+
+resource "aws_iam_role_policy_attachment" "eks_load_balancing_policy" {
+  role       = aws_iam_role.eks_cluster.name
+  policy_arn = "arn:aws:iam::aws:policy/AmazonEKSLoadBalancingPolicy"
+}
+
+resource "aws_iam_role_policy_attachment" "eks_networking_policy" {
+  role       = aws_iam_role.eks_cluster.name
+  policy_arn = "arn:aws:iam::aws:policy/AmazonEKSNetworkingPolicy"
+}
+
+# ── Node IAM Role (used by Auto Mode — no managed node group needed) ──────────
+# Auto Mode uses minimal policies: WorkerNodeMinimal + ECR pull-only.
 
 resource "aws_iam_role" "eks_nodes" {
   name = "${local.prefix}-eks-nodes-role"
@@ -73,56 +67,74 @@ resource "aws_iam_role" "eks_nodes" {
   }
 }
 
-resource "aws_iam_role_policy_attachment" "eks_worker_node" {
+resource "aws_iam_role_policy_attachment" "eks_worker_node_minimal" {
   role       = aws_iam_role.eks_nodes.name
-  policy_arn = "arn:aws:iam::aws:policy/AmazonEKSWorkerNodePolicy"
+  policy_arn = "arn:aws:iam::aws:policy/AmazonEKSWorkerNodeMinimalPolicy"
 }
 
-resource "aws_iam_role_policy_attachment" "eks_cni" {
+resource "aws_iam_role_policy_attachment" "eks_ecr_pull_only" {
   role       = aws_iam_role.eks_nodes.name
-  policy_arn = "arn:aws:iam::aws:policy/AmazonEKS_CNI_Policy"
+  policy_arn = "arn:aws:iam::aws:policy/AmazonEC2ContainerRegistryPullOnly"
 }
 
-resource "aws_iam_role_policy_attachment" "eks_ecr_read" {
-  role       = aws_iam_role.eks_nodes.name
-  policy_arn = "arn:aws:iam::aws:policy/AmazonEC2ContainerRegistryReadOnly"
-}
+# ── EKS Cluster — Auto Mode ───────────────────────────────────────────────────
+# Auto Mode delegates node provisioning, patching, LBC, EBS CSI, VPC CNI,
+# CoreDNS, and kube-proxy to AWS. No managed node groups, no addon installs.
 
-# ── Managed Node Group ────────────────────────────────────────────────────────
+resource "aws_eks_cluster" "main" {
+  name                          = "${local.prefix}-cluster"
+  role_arn                      = aws_iam_role.eks_cluster.arn
+  version                       = var.kubernetes_version
+  bootstrap_self_managed_addons = false
 
-resource "aws_eks_node_group" "main" {
-  cluster_name    = aws_eks_cluster.main.name
-  node_group_name = "${local.prefix}-nodes"
-  node_role_arn   = aws_iam_role.eks_nodes.arn
-  subnet_ids      = local.private_subnet_ids
-  instance_types  = ["t3.medium"]
-
-  scaling_config {
-    desired_size = 2
-    min_size     = 1
-    max_size     = 4
+  access_config {
+    authentication_mode                         = "API"
+    bootstrap_cluster_creator_admin_permissions = true
   }
 
-  update_config {
-    max_unavailable = 1
+  # Auto Mode: AWS provisions and patches nodes from general-purpose NodePool.
+  compute_config {
+    enabled       = true
+    node_role_arn = aws_iam_role.eks_nodes.arn
+    node_pools    = ["general-purpose"]
+  }
+
+  # Auto Mode: AWS manages EBS CSI driver and default StorageClass.
+  storage_config {
+    block_storage {
+      enabled = true
+    }
+  }
+
+  # Auto Mode: AWS manages AWS LBC for Ingress + TargetGroupBinding.
+  kubernetes_network_config {
+    elastic_load_balancing {
+      enabled = true
+    }
+  }
+
+  vpc_config {
+    subnet_ids              = local.private_subnet_ids
+    endpoint_private_access = true
+    endpoint_public_access  = true
   }
 
   depends_on = [
-    aws_iam_role_policy_attachment.eks_worker_node,
-    aws_iam_role_policy_attachment.eks_cni,
-    aws_iam_role_policy_attachment.eks_ecr_read,
+    aws_iam_role_policy_attachment.eks_cluster_policy,
+    aws_iam_role_policy_attachment.eks_compute_policy,
+    aws_iam_role_policy_attachment.eks_block_storage_policy,
+    aws_iam_role_policy_attachment.eks_load_balancing_policy,
+    aws_iam_role_policy_attachment.eks_networking_policy,
   ]
 
   tags = {
-    Name    = "${local.prefix}-nodes"
+    Name    = "${local.prefix}-cluster"
     Project = "anycompany-users"
     Env     = var.env
   }
 }
 
 # ── EKS Access Entries — console / ops principals ────────────────────────────
-# Grant cluster-admin to any IAM ARNs passed via eks_admin_iam_arns.
-# Use for AWS console users, ops roles, and CI roles that need kubectl access.
 
 resource "aws_eks_access_entry" "admins" {
   for_each = toset(var.eks_admin_iam_arns)
@@ -146,24 +158,6 @@ resource "aws_eks_access_policy_association" "admins" {
   depends_on = [aws_eks_access_entry.admins]
 }
 
-# ── Pod Identity Agent addon ──────────────────────────────────────────────────
-# Replaces IRSA. No per-cluster OIDC provider needed.
-# Pod Identity agent runs as a DaemonSet and intercepts credential requests
-# from pods, returning short-lived tokens scoped to the associated IAM role.
-
-resource "aws_eks_addon" "pod_identity_agent" {
-  cluster_name = aws_eks_cluster.main.name
-  addon_name   = "eks-pod-identity-agent"
-
-  depends_on = [aws_eks_node_group.main]
-
-  tags = {
-    Name    = "${local.prefix}-pod-identity-agent"
-    Project = "anycompany-users"
-    Env     = var.env
-  }
-}
-
 # ── Outputs ───────────────────────────────────────────────────────────────────
 
 output "eks_cluster_name" {
@@ -172,12 +166,12 @@ output "eks_cluster_name" {
 }
 
 output "eks_cluster_endpoint" {
-  description = "EKS cluster API endpoint — pass as var.eks_cluster_endpoint on second apply"
+  description = "EKS cluster API endpoint"
   value       = aws_eks_cluster.main.endpoint
 }
 
 output "eks_cluster_ca_cert" {
-  description = "EKS cluster CA cert (base64) — pass as var.eks_cluster_ca_cert on second apply"
+  description = "EKS cluster CA cert (base64)"
   value       = aws_eks_cluster.main.certificate_authority[0].data
   sensitive   = true
 }

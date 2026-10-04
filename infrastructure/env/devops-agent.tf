@@ -1,7 +1,7 @@
-# ── AWS DevOps Agent ──────────────────────────────────────────────────────────
-# Fully managed AI agent that monitors infrastructure, performs root cause
-# analysis on operational events, and runs automated remediation — replacing
-# the need for a dedicated on-call engineer.
+# ── AWS DevOps Agent (OPTIONAL — not part of the boilerplate) ─────────────────
+# Remove or ignore this file if you don't need AI-assisted ops.
+# Only include it when your team actively uses AWS DevOps Agent for monitoring
+# and root cause analysis. It requires the awscc provider and aidevops:* IAM.
 #
 # Uses the awscc provider (AWS Cloud Control API) >= 1.98.0.
 # Supported regions: us-east-1, us-west-2, ap-southeast-2, ap-northeast-1,

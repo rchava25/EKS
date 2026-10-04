@@ -237,6 +237,50 @@ jobs:
           sed "s|LOGIN_TG_ARN|${LOGIN_TG_ARN}|g" k8s/login-tgb.yaml | kubectl apply -n "${NS}" -f -
           sed "s|USERS_TG_ARN|${USERS_TG_ARN}|g" k8s/users-tgb.yaml | kubectl apply -n "${NS}" -f -
 
+      - name: Apply ESO ClusterSecretStore + ExternalSecrets
+        run: |
+          NS="anycompany-users-${{ needs.env-config.outputs.env }}"
+          PREFIX="anycompany-users-${{ needs.env-config.outputs.env }}"
+
+          for i in $(seq 1 24); do
+            kubectl get crd clustersecretstores.external-secrets.io &>/dev/null && break
+            echo "Waiting for ESO CRDs... ($i/24)"; sleep 5
+          done
+
+          sed "s|AWS_REGION|${{ env.AWS_REGION }}|g" k8s/cluster-secret-store.yaml \
+            | kubectl apply -f -
+
+          USERS_SECRET=$(aws secretsmanager describe-secret \
+            --secret-id "${PREFIX}-users-service" \
+            --query 'Name' --output text)
+          LOGIN_SECRET=$(aws secretsmanager describe-secret \
+            --secret-id "${PREFIX}-login-service" \
+            --query 'Name' --output text)
+
+          sed "s|USERS_SECRET_NAME|${USERS_SECRET}|g" k8s/external-secret-users.yaml \
+            | kubectl apply -n "${NS}" -f -
+          sed "s|LOGIN_SECRET_NAME|${LOGIN_SECRET}|g" k8s/external-secret-login.yaml \
+            | kubectl apply -n "${NS}" -f -
+
+      - name: Apply VPA + Kyverno policies
+        run: |
+          NS="anycompany-users-${{ needs.env-config.outputs.env }}"
+
+          for i in $(seq 1 24); do
+            kubectl get crd verticalpodautoscalers.autoscaling.k8s.io &>/dev/null && break
+            echo "Waiting for VPA CRDs... ($i/24)"; sleep 5
+          done
+
+          kubectl apply -n "${NS}" -f k8s/vpa-users.yaml
+          kubectl apply -n "${NS}" -f k8s/vpa-login.yaml
+
+          for i in $(seq 1 24); do
+            kubectl get crd clusterpolicies.kyverno.io &>/dev/null && break
+            echo "Waiting for Kyverno CRDs... ($i/24)"; sleep 5
+          done
+
+          kubectl apply -f k8s/kyverno-policies.yaml
+
   # ── Check whether preprod credentials are configured ──────────────────────
   check-preprod:
     needs: app
