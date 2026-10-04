@@ -5,11 +5,15 @@ terraform {
       source  = "hashicorp/aws"
       version = "~> 5.0"
     }
+    awscc = {
+      source  = "hashicorp/awscc"
+      version = "~> 1.98"
+    }
     kubernetes = {
       source  = "hashicorp/kubernetes"
       version = "~> 2.0"
     }
-tls = {
+    tls = {
       source  = "hashicorp/tls"
       version = "~> 4.0"
     }
@@ -17,12 +21,20 @@ tls = {
       source  = "hashicorp/helm"
       version = "~> 2.0"
     }
+    time = {
+      source  = "hashicorp/time"
+      version = "~> 0.9"
+    }
   }
   # Bucket and region supplied via -backend-config at init time.
   backend "s3" {}
 }
 
 provider "aws" {
+  region = var.aws_region
+}
+
+provider "awscc" {
   region = var.aws_region
 }
 
