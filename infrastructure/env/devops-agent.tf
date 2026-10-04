@@ -111,8 +111,10 @@ resource "awscc_devopsagent_agent_space" "main" {
   name        = "${local.prefix}-agent-space"
   description = "AI DevOps Agent for AnyCompany Users Service (${var.env})"
 
-  operator_app_config = {
-    role_arn = aws_iam_role.devops_agent_operator.arn
+  operator_app = {
+    iam = {
+      operator_app_role_arn = aws_iam_role.devops_agent_operator.arn
+    }
   }
 
   depends_on = [time_sleep.iam_propagation]
@@ -123,14 +125,19 @@ resource "awscc_devopsagent_agent_space" "main" {
 # remediate resources (EKS, ALB, DynamoDB, Lambda, API Gateway, Cognito).
 
 resource "awscc_devopsagent_association" "this_account" {
-  agent_space_id = awscc_devopsagent_agent_space.main.agent_space_id
+  agent_space_id = awscc_devopsagent_agent_space.main.id
+  service_id     = "aws"
 
-  association_config = {
-    aws_config = {
-      role_arn    = aws_iam_role.devops_agent_space.arn
-      source_type = "MONITOR"
+  configuration = {
+    aws = {
+      assumable_role_arn = aws_iam_role.devops_agent_space.arn
+      account_id         = data.aws_caller_identity.current.account_id
+      account_type       = "monitor"
+      resources          = []
     }
   }
+
+  depends_on = [awscc_devopsagent_agent_space.main]
 }
 
 # ── Custom Skill: AnyCompany Users Service ────────────────────────────────────
@@ -138,7 +145,7 @@ resource "awscc_devopsagent_association" "this_account" {
 # for this service. Loaded automatically when relevant issues are detected.
 
 resource "awscc_devopsagent_asset" "users_service_skill" {
-  agent_space_id = awscc_devopsagent_agent_space.main.agent_space_id
+  agent_space_id = awscc_devopsagent_agent_space.main.id
   asset_type     = "skill"
 
   metadata = jsonencode({
@@ -220,7 +227,7 @@ resource "awscc_devopsagent_asset" "users_service_skill" {
 # on the users service stack.
 
 resource "awscc_devopsagent_asset" "users_service_agent" {
-  agent_space_id = awscc_devopsagent_agent_space.main.agent_space_id
+  agent_space_id = awscc_devopsagent_agent_space.main.id
   asset_type     = "custom_agent"
 
   metadata = jsonencode({
@@ -253,7 +260,7 @@ resource "awscc_devopsagent_asset" "users_service_agent" {
 # before they become user-impacting incidents.
 
 resource "awscc_devopsagent_trigger" "daily_health_check" {
-  agent_space_id = awscc_devopsagent_agent_space.main.agent_space_id
+  agent_space_id = awscc_devopsagent_agent_space.main.id
   type           = "TIME_BASED"
 
   condition = {
