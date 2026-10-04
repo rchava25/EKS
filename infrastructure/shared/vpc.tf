@@ -72,10 +72,9 @@ resource "aws_internet_gateway" "shared" {
   }
 }
 
-# ── Regional NAT Gateway ──────────────────────────────────────────────────────
-# A single regional NAT gateway serves all AZs in the VPC — no cross-AZ
-# data transfer charges and no single-AZ failure risk.
-# availability_mode = "regional" replaces per-AZ zonal NAT gateways.
+# ── NAT Gateway ───────────────────────────────────────────────────────────────
+# Single NAT gateway — all private subnets route through it.
+# Cheaper than per-AZ NATs: no cross-AZ data transfer charges for NAT traffic.
 
 resource "aws_eip" "nat" {
   domain     = "vpc"
@@ -87,11 +86,10 @@ resource "aws_eip" "nat" {
   }
 }
 
-resource "aws_nat_gateway" "regional" {
-  allocation_id     = aws_eip.nat.id
-  subnet_id         = aws_subnet.public_a.id
-  availability_mode = "regional"
-  depends_on        = [aws_internet_gateway.shared]
+resource "aws_nat_gateway" "main" {
+  allocation_id = aws_eip.nat.id
+  subnet_id     = aws_subnet.public_a.id
+  depends_on    = [aws_internet_gateway.shared]
 
   tags = {
     Name    = "${var.project}-nonprod-nat-gw"
@@ -131,7 +129,7 @@ resource "aws_route_table" "private" {
 
   route {
     cidr_block     = "0.0.0.0/0"
-    nat_gateway_id = aws_nat_gateway.regional.id
+    nat_gateway_id = aws_nat_gateway.main.id
   }
 
   tags = {

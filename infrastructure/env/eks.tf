@@ -27,9 +27,15 @@ resource "aws_iam_role_policy_attachment" "eks_cluster_policy" {
 # ── EKS Cluster ───────────────────────────────────────────────────────────────
 
 resource "aws_eks_cluster" "main" {
-  name     = "${local.prefix}-cluster"
-  role_arn = aws_iam_role.eks_cluster.arn
-  version  = var.kubernetes_version
+  name                          = "${local.prefix}-cluster"
+  role_arn                      = aws_iam_role.eks_cluster.arn
+  version                       = var.kubernetes_version
+  bootstrap_self_managed_addons = false
+
+  access_config {
+    authentication_mode                         = "API_AND_CONFIG_MAP"
+    bootstrap_cluster_creator_admin_permissions = true
+  }
 
   vpc_config {
     subnet_ids              = local.private_subnet_ids

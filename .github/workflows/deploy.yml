@@ -101,7 +101,6 @@ jobs:
             -target=aws_iam_role_policy_attachment.eks_ecr_read \
             -target=aws_eks_cluster.main \
             -target=aws_eks_node_group.main \
-            -target=aws_iam_openid_connect_provider.eks \
             -auto-approve
 
       - name: Phase 2 — wait for EKS active
@@ -309,7 +308,6 @@ jobs:
             -target=aws_iam_role_policy_attachment.eks_ecr_read \
             -target=aws_eks_cluster.main \
             -target=aws_eks_node_group.main \
-            -target=aws_iam_openid_connect_provider.eks \
             -auto-approve
 
       - name: Phase 2 — wait for EKS active (preprod)
@@ -444,7 +442,6 @@ jobs:
             -target=aws_iam_role_policy_attachment.eks_ecr_read \
             -target=aws_eks_cluster.main \
             -target=aws_eks_node_group.main \
-            -target=aws_iam_openid_connect_provider.eks \
             -auto-approve
 
       - name: Phase 2 — wait for EKS active (prod)

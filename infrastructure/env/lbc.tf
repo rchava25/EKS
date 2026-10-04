@@ -93,6 +93,8 @@ resource "helm_release" "lbc" {
     value = local.vpc_id
   }
 
+  wait = true
+
   depends_on = [aws_eks_node_group.main, aws_iam_role_policy.lbc, aws_eks_pod_identity_association.lbc]
 }
 
