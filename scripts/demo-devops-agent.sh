@@ -12,7 +12,7 @@ DEPLOYMENT="users-service"
 step() { echo; echo "══════════════════════════════════════════"; echo "  $*"; echo "══════════════════════════════════════════"; }
 
 # ── Prereqs ───────────────────────────────────────────────────────────────────
-aws eks update-kubeconfig --name "$CLUSTER" --region "$REGION" --quiet
+aws eks update-kubeconfig --name "$CLUSTER" --region "$REGION" 2>/dev/null || true
 
 AGENT_SPACE_ID=$(aws eks describe-cluster --name "$CLUSTER" --region "$REGION" \
   --query 'cluster.tags' --output json 2>/dev/null || echo "")
