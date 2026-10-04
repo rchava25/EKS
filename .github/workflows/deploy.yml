@@ -211,6 +211,8 @@ jobs:
           sed "s|IMAGE_TAG|${USERS_TAG}|g" k8s/users-deployment.yaml | kubectl apply -n "${NS}" -f -
           kubectl apply -n "${NS}" -f k8s/login-service.yaml
           kubectl apply -n "${NS}" -f k8s/users-service.yaml
+          kubectl apply -n "${NS}" -f k8s/login-scaledobject.yaml
+          kubectl apply -n "${NS}" -f k8s/users-scaledobject.yaml
 
           kubectl rollout status deployment/login-service -n "${NS}" --timeout=5m
           kubectl rollout status deployment/users-service -n "${NS}" --timeout=5m
@@ -345,6 +347,8 @@ jobs:
             | kubectl apply -n anycompany-users-preprod -f -
           kubectl apply -n anycompany-users-preprod -f k8s/login-service.yaml
           kubectl apply -n anycompany-users-preprod -f k8s/users-service.yaml
+          kubectl apply -n anycompany-users-preprod -f k8s/login-scaledobject.yaml
+          kubectl apply -n anycompany-users-preprod -f k8s/users-scaledobject.yaml
 
           kubectl rollout status deployment/login-service -n anycompany-users-preprod --timeout=5m
           kubectl rollout status deployment/users-service -n anycompany-users-preprod --timeout=5m
@@ -477,6 +481,8 @@ jobs:
             | kubectl apply -n anycompany-users-prod -f -
           kubectl apply -n anycompany-users-prod -f k8s/login-service.yaml
           kubectl apply -n anycompany-users-prod -f k8s/users-service.yaml
+          kubectl apply -n anycompany-users-prod -f k8s/login-scaledobject.yaml
+          kubectl apply -n anycompany-users-prod -f k8s/users-scaledobject.yaml
 
           kubectl rollout status deployment/login-service -n anycompany-users-prod --timeout=5m
           kubectl rollout status deployment/users-service -n anycompany-users-prod --timeout=5m

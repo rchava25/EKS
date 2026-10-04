@@ -114,19 +114,19 @@ resource "aws_eks_node_group" "main" {
   }
 }
 
-# ── OIDC Provider for IRSA ────────────────────────────────────────────────────
+# ── Pod Identity Agent addon ──────────────────────────────────────────────────
+# Replaces IRSA. No per-cluster OIDC provider needed.
+# Pod Identity agent runs as a DaemonSet and intercepts credential requests
+# from pods, returning short-lived tokens scoped to the associated IAM role.
 
-data "tls_certificate" "eks_oidc" {
-  url = aws_eks_cluster.main.identity[0].oidc[0].issuer
-}
+resource "aws_eks_addon" "pod_identity_agent" {
+  cluster_name = aws_eks_cluster.main.name
+  addon_name   = "eks-pod-identity-agent"
 
-resource "aws_iam_openid_connect_provider" "eks" {
-  url             = aws_eks_cluster.main.identity[0].oidc[0].issuer
-  client_id_list  = ["sts.amazonaws.com"]
-  thumbprint_list = [data.tls_certificate.eks_oidc.certificates[0].sha1_fingerprint]
+  depends_on = [aws_eks_node_group.main]
 
   tags = {
-    Name    = "${local.prefix}-eks-oidc"
+    Name    = "${local.prefix}-pod-identity-agent"
     Project = "anycompany-users"
     Env     = var.env
   }
@@ -148,9 +148,4 @@ output "eks_cluster_ca_cert" {
   description = "EKS cluster CA cert (base64) — pass as var.eks_cluster_ca_cert on second apply"
   value       = aws_eks_cluster.main.certificate_authority[0].data
   sensitive   = true
-}
-
-output "eks_oidc_provider_arn" {
-  description = "OIDC provider ARN used for IRSA trust policies"
-  value       = aws_iam_openid_connect_provider.eks.arn
 }

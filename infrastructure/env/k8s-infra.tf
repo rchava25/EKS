@@ -12,9 +12,6 @@ resource "kubernetes_service_account" "login_service" {
   metadata {
     name      = "login-service"
     namespace = kubernetes_namespace.env.metadata[0].name
-    annotations = {
-      "eks.amazonaws.com/role-arn" = aws_iam_role.login_service.arn
-    }
   }
 }
 
@@ -22,9 +19,6 @@ resource "kubernetes_service_account" "users_service" {
   metadata {
     name      = "users-service"
     namespace = kubernetes_namespace.env.metadata[0].name
-    annotations = {
-      "eks.amazonaws.com/role-arn" = aws_iam_role.users_service.arn
-    }
   }
 }
 

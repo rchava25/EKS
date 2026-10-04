@@ -1,10 +1,5 @@
-locals {
-  # Strip "https://" prefix for use as the OIDC condition variable key.
-  oidc_host = replace(aws_iam_openid_connect_provider.eks.url, "https://", "")
-}
-
-# ── login-service IRSA Role ───────────────────────────────────────────────────
-# Cognito only — no DynamoDB permissions.
+# ── login-service IAM Role (Pod Identity) ────────────────────────────────────
+# Trusted by pods.eks.amazonaws.com — no per-cluster OIDC conditions needed.
 
 resource "aws_iam_role" "login_service" {
   name = "${local.prefix}-login-service-role"
@@ -12,17 +7,9 @@ resource "aws_iam_role" "login_service" {
   assume_role_policy = jsonencode({
     Version = "2012-10-17"
     Statement = [{
-      Action = "sts:AssumeRoleWithWebIdentity"
-      Effect = "Allow"
-      Principal = {
-        Federated = aws_iam_openid_connect_provider.eks.arn
-      }
-      Condition = {
-        StringEquals = {
-          "${local.oidc_host}:sub" = "system:serviceaccount:${local.prefix}:login-service"
-          "${local.oidc_host}:aud" = "sts.amazonaws.com"
-        }
-      }
+      Action    = ["sts:AssumeRole", "sts:TagSession"]
+      Effect    = "Allow"
+      Principal = { Service = "pods.eks.amazonaws.com" }
     }]
   })
 
@@ -50,8 +37,15 @@ resource "aws_iam_role_policy" "login_service_cognito" {
   })
 }
 
-# ── users-service IRSA Role ───────────────────────────────────────────────────
-# DynamoDB only — no Cognito permissions.
+# Bind the role to login-service pods in this namespace via Pod Identity.
+resource "aws_eks_pod_identity_association" "login_service" {
+  cluster_name    = aws_eks_cluster.main.name
+  namespace       = kubernetes_namespace.env.metadata[0].name
+  service_account = "login-service"
+  role_arn        = aws_iam_role.login_service.arn
+}
+
+# ── users-service IAM Role (Pod Identity) ────────────────────────────────────
 
 resource "aws_iam_role" "users_service" {
   name = "${local.prefix}-users-service-role"
@@ -59,17 +53,9 @@ resource "aws_iam_role" "users_service" {
   assume_role_policy = jsonencode({
     Version = "2012-10-17"
     Statement = [{
-      Action = "sts:AssumeRoleWithWebIdentity"
-      Effect = "Allow"
-      Principal = {
-        Federated = aws_iam_openid_connect_provider.eks.arn
-      }
-      Condition = {
-        StringEquals = {
-          "${local.oidc_host}:sub" = "system:serviceaccount:${local.prefix}:users-service"
-          "${local.oidc_host}:aud" = "sts.amazonaws.com"
-        }
-      }
+      Action    = ["sts:AssumeRole", "sts:TagSession"]
+      Effect    = "Allow"
+      Principal = { Service = "pods.eks.amazonaws.com" }
     }]
   })
 
@@ -96,7 +82,6 @@ resource "aws_iam_role_policy" "users_service_dynamodb" {
         "dynamodb:Query",
         "dynamodb:Scan",
       ]
-      # Allow access to table and all its indexes (needed for GSI queries).
       Resource = [
         aws_dynamodb_table.users.arn,
         "${aws_dynamodb_table.users.arn}/index/*",
@@ -105,12 +90,20 @@ resource "aws_iam_role_policy" "users_service_dynamodb" {
   })
 }
 
+# Bind the role to users-service pods in this namespace via Pod Identity.
+resource "aws_eks_pod_identity_association" "users_service" {
+  cluster_name    = aws_eks_cluster.main.name
+  namespace       = kubernetes_namespace.env.metadata[0].name
+  service_account = "users-service"
+  role_arn        = aws_iam_role.users_service.arn
+}
+
 output "login_service_role_arn" {
-  description = "IRSA role ARN for the login-service pods"
+  description = "Pod Identity role ARN for the login-service pods"
   value       = aws_iam_role.login_service.arn
 }
 
 output "users_service_role_arn" {
-  description = "IRSA role ARN for the users-service pods"
+  description = "Pod Identity role ARN for the users-service pods"
   value       = aws_iam_role.users_service.arn
 }

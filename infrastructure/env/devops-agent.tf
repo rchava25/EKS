@@ -283,10 +283,10 @@ resource "awscc_devopsagent_trigger" "daily_health_check" {
 
 output "devops_agent_space_id" {
   description = "DevOps Agent Space ID — use this to query incidents via CLI"
-  value       = awscc_devopsagent_agent_space.main.agent_space_id
+  value       = awscc_devopsagent_agent_space.main.id
 }
 
 output "devops_agent_space_arn" {
   description = "DevOps Agent Space ARN"
-  value       = awscc_devopsagent_agent_space.main.agent_space_arn
+  value       = "arn:aws:aidevops:${var.aws_region}:${data.aws_caller_identity.current.account_id}:agentspace/${awscc_devopsagent_agent_space.main.id}"
 }

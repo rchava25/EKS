@@ -1,31 +1,16 @@
-# ── IRSA role for AWS Load Balancer Controller ────────────────────────────────
-
-data "aws_iam_policy_document" "lbc_trust" {
-  statement {
-    actions = ["sts:AssumeRoleWithWebIdentity"]
-
-    principals {
-      type        = "Federated"
-      identifiers = [aws_iam_openid_connect_provider.eks.arn]
-    }
-
-    condition {
-      test     = "StringEquals"
-      variable = "${replace(aws_iam_openid_connect_provider.eks.url, "https://", "")}:sub"
-      values   = ["system:serviceaccount:kube-system:aws-load-balancer-controller"]
-    }
-
-    condition {
-      test     = "StringEquals"
-      variable = "${replace(aws_iam_openid_connect_provider.eks.url, "https://", "")}:aud"
-      values   = ["sts.amazonaws.com"]
-    }
-  }
-}
+# ── IAM Role for AWS Load Balancer Controller (Pod Identity) ─────────────────
 
 resource "aws_iam_role" "lbc" {
-  name               = "${local.prefix}-lbc-role"
-  assume_role_policy = data.aws_iam_policy_document.lbc_trust.json
+  name = "${local.prefix}-lbc-role"
+
+  assume_role_policy = jsonencode({
+    Version = "2012-10-17"
+    Statement = [{
+      Action    = ["sts:AssumeRole", "sts:TagSession"]
+      Effect    = "Allow"
+      Principal = { Service = "pods.eks.amazonaws.com" }
+    }]
+  })
 
   tags = {
     Name    = "${local.prefix}-lbc-role"
@@ -67,6 +52,16 @@ resource "aws_iam_role_policy" "lbc" {
   })
 }
 
+# Bind LBC role to its ServiceAccount via Pod Identity.
+resource "aws_eks_pod_identity_association" "lbc" {
+  cluster_name    = aws_eks_cluster.main.name
+  namespace       = "kube-system"
+  service_account = "aws-load-balancer-controller"
+  role_arn        = aws_iam_role.lbc.arn
+
+  depends_on = [aws_eks_addon.pod_identity_agent]
+}
+
 # ── AWS Load Balancer Controller via Helm ─────────────────────────────────────
 
 resource "helm_release" "lbc" {
@@ -90,10 +85,6 @@ resource "helm_release" "lbc" {
     value = "aws-load-balancer-controller"
   }
   set {
-    name  = "serviceAccount.annotations.eks\\.amazonaws\\.com/role-arn"
-    value = aws_iam_role.lbc.arn
-  }
-  set {
     name  = "region"
     value = var.aws_region
   }
@@ -102,7 +93,7 @@ resource "helm_release" "lbc" {
     value = local.vpc_id
   }
 
-  depends_on = [aws_eks_node_group.main, aws_iam_role_policy.lbc]
+  depends_on = [aws_eks_node_group.main, aws_iam_role_policy.lbc, aws_eks_pod_identity_association.lbc]
 }
 
 output "lbc_role_arn" {
