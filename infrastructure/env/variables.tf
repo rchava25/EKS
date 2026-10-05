@@ -32,27 +32,14 @@ variable "vpc_cidr" {
   default     = "10.2.0.0/16"
 }
 
-variable "kubernetes_version" {
-  description = "EKS Kubernetes version. Increment one minor version at a time — AWS rejects multi-version skips."
-  type        = string
-  default     = "1.31"
+variable "task_cpu" {
+  description = "ECS task CPU units (256=0.25vCPU, 512=0.5vCPU, 1024=1vCPU)"
+  type        = number
+  default     = 256
 }
 
-variable "eks_cluster_endpoint" {
-  description = "EKS cluster API endpoint — empty on first apply; populated by CI from Terraform outputs for second apply that creates kubernetes resources"
-  type        = string
-  default     = ""
-}
-
-variable "eks_cluster_ca_cert" {
-  description = "EKS cluster CA certificate (base64) — empty on first apply; populated by CI from Terraform outputs"
-  type        = string
-  default     = ""
-  sensitive   = true
-}
-
-variable "eks_admin_iam_arns" {
-  description = "List of IAM user/role ARNs to grant EKS cluster-admin access (console, ops, etc.)"
-  type        = list(string)
-  default     = []
+variable "task_memory" {
+  description = "ECS task memory in MB"
+  type        = number
+  default     = 512
 }

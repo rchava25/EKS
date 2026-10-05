@@ -1,10 +1,13 @@
 # ECR repos are shared across all non-prod environments (dev + all mr-*).
-# They are created once when create_ecr = true (dev only) and reused by MR environments.
-# preprod and prod pull images from the non-prod repos, so create_ecr = false for those.
+# Created once when create_ecr = true (dev only); preprod/prod look them up.
 
-resource "aws_ecr_repository" "login_service" {
-  count                = var.create_ecr ? 1 : 0
-  name                 = "anycompany-login-service"
+locals {
+  service_names = ["login-service", "users-service", "browse-service", "search-service", "payment-service", "shipping-service"]
+}
+
+resource "aws_ecr_repository" "services" {
+  for_each             = var.create_ecr ? toset(local.service_names) : toset([])
+  name                 = "anycompany-${each.key}"
   image_tag_mutability = "IMMUTABLE"
   force_delete         = true
 
@@ -13,35 +16,19 @@ resource "aws_ecr_repository" "login_service" {
   }
 
   tags = {
-    Name    = "anycompany-login-service"
+    Name    = "anycompany-${each.key}"
     Project = "anycompany-users"
   }
 }
 
-resource "aws_ecr_repository" "users_service" {
-  count                = var.create_ecr ? 1 : 0
-  name                 = "anycompany-users-service"
-  image_tag_mutability = "IMMUTABLE"
-  force_delete         = true
-
-  image_scanning_configuration {
-    scan_on_push = true
-  }
-
-  tags = {
-    Name    = "anycompany-users-service"
-    Project = "anycompany-users"
-  }
-}
-
-resource "aws_ecr_lifecycle_policy" "login_service" {
-  count      = var.create_ecr ? 1 : 0
-  repository = aws_ecr_repository.login_service[0].name
+resource "aws_ecr_lifecycle_policy" "services" {
+  for_each   = var.create_ecr ? toset(local.service_names) : toset([])
+  repository = aws_ecr_repository.services[each.key].name
 
   policy = jsonencode({
     rules = [{
       rulePriority = 1
-      description  = "Retain last 20 images; all envs share the same SHA tag"
+      description  = "Retain last 20 images"
       selection = {
         tagStatus   = "any"
         countType   = "imageCountMoreThan"
@@ -52,46 +39,19 @@ resource "aws_ecr_lifecycle_policy" "login_service" {
   })
 }
 
-resource "aws_ecr_lifecycle_policy" "users_service" {
-  count      = var.create_ecr ? 1 : 0
-  repository = aws_ecr_repository.users_service[0].name
-
-  policy = jsonencode({
-    rules = [{
-      rulePriority = 1
-      description  = "Retain last 20 images; all envs share the same SHA tag"
-      selection = {
-        tagStatus   = "any"
-        countType   = "imageCountMoreThan"
-        countNumber = 20
-      }
-      action = { type = "expire" }
-    }]
-  })
-}
-
-# Look up the repos when this env doesn't own them (mr, preprod, prod).
-data "aws_ecr_repository" "login_service" {
-  count = var.create_ecr ? 0 : 1
-  name  = "anycompany-login-service"
-}
-
-data "aws_ecr_repository" "users_service" {
-  count = var.create_ecr ? 0 : 1
-  name  = "anycompany-users-service"
+data "aws_ecr_repository" "services" {
+  for_each = var.create_ecr ? toset([]) : toset(local.service_names)
+  name     = "anycompany-${each.key}"
 }
 
 locals {
-  login_ecr_url = var.create_ecr ? aws_ecr_repository.login_service[0].repository_url : data.aws_ecr_repository.login_service[0].repository_url
-  users_ecr_url = var.create_ecr ? aws_ecr_repository.users_service[0].repository_url : data.aws_ecr_repository.users_service[0].repository_url
+  ecr_urls = {
+    for s in local.service_names :
+    s => var.create_ecr ? aws_ecr_repository.services[s].repository_url : data.aws_ecr_repository.services[s].repository_url
+  }
 }
 
-output "login_ecr_url" {
-  description = "ECR URL for the login-service image"
-  value       = local.login_ecr_url
-}
-
-output "users_ecr_url" {
-  description = "ECR URL for the users-service image"
-  value       = local.users_ecr_url
+output "ecr_urls" {
+  description = "ECR repository URLs keyed by service name"
+  value       = local.ecr_urls
 }

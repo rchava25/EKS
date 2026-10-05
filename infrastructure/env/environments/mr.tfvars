@@ -1,5 +1,6 @@
-env                = "mr"
-aws_region         = "us-east-1"
-nat_gateway_mode   = "regional"
-create_ecr         = false
-kubernetes_version = "1.37"
+env              = "mr"
+aws_region       = "us-east-1"
+nat_gateway_mode = "regional"
+create_ecr       = false
+task_cpu         = 256
+task_memory      = 512

@@ -157,62 +157,57 @@ resource "awscc_devopsagent_asset" "users_service_skill" {
   files = [{
     path         = "SKILL.md"
     content_text = <<-EOT
-      # AnyCompany Users Service — Runbook
+      # AnyCompany E-Commerce Platform — Runbook
 
       ## Architecture
-      - API Gateway (REST) → VPC Link → Internal ALB → EKS pods
-      - Services: login-service (port 8080), users-service (port 8080)
-      - Namespace: anycompany-users-${var.env}
-      - Database: DynamoDB table anycompany-users-${var.env}-users
+      - API Gateway (REST) → VPC Link → Internal ALB → ECS Fargate tasks
+      - Services: login-service, users-service, browse-service, search-service, payment-service, shipping-service (all port 8080)
+      - Cluster: ECS Fargate — ${local.prefix}-cluster
+      - Databases: DynamoDB tables for users, products, orders, shipments
+      - Cache: ElastiCache Redis for browse-service
+      - Search: Amazon OpenSearch for search-service
+      - Events: SQS shipping-dispatch queue (payment → shipping async flow)
       - Auth: Cognito User Pool + Lambda token authorizer
-      - Load balancing: AWS LBC + TargetGroupBinding (IP mode)
-      - Autoscaling: HPA min=2 max=5 CPU target=50%
+      - Autoscaling: App Auto Scaling — CPU target 60%, min=1 max=5 per service
 
       ## Known Failure Patterns
 
-      ### Pod crash loop (OOMKilled)
-      - Symptom: Pod status OOMKilled, restartCount increasing
-      - Cause: Memory limit (512Mi) exceeded — likely large DynamoDB scan or memory leak
-      - Action: kubectl rollout restart deployment/<name> -n anycompany-users-${var.env}
-      - Prevention: Add pagination to list endpoints, investigate memory growth
+      ### ECS task OOMKilled
+      - Symptom: Task stopped with exit code 137, StopCode=OutOfMemoryError
+      - Check: aws ecs describe-tasks --cluster ${local.prefix}-cluster --tasks <task-arn>
+      - Action: Increase task_memory variable and redeploy; investigate DynamoDB scan pagination
+      - Logs: aws logs tail /ecs/${local.prefix}-users-service --follow
 
-      ### Pod crash loop (unknown error)
-      - Symptom: CrashLoopBackOff, restartCount > 3
-      - Action: kubectl logs -n anycompany-users-${var.env} -l app=users-service --previous
-      - Then: kubectl rollout restart deployment/users-service -n anycompany-users-${var.env}
+      ### ECS task CrashLoopBackOff (repeated stops)
+      - Symptom: Task keeps stopping, ECS keeps restarting it
+      - Action: aws logs tail /ecs/${local.prefix}-users-service --since 10m
+      - Then: aws ecs update-service --cluster ${local.prefix}-cluster --service ${local.prefix}-users --force-new-deployment
 
       ### ALB target group unhealthy
       - Symptom: All TG targets show unhealthy, 503 from API Gateway
-      - Check: /health endpoint on port 8080 should return 200
-      - Action: Verify pods are running and readinessProbe is passing
-      - Command: kubectl get pods -n anycompany-users-${var.env}
+      - Check: aws elbv2 describe-target-health --target-group-arn <arn>
+      - Action: Verify /health returns 200; check ECS task security group allows port 8080 from ALB SG
 
       ### API Gateway 403 after login
       - Symptom: POST /auth/login succeeds but GET /users returns 403
-      - Cause: Lambda authorizer cache (300s TTL) returning policy scoped to wrong method ARN
-      - Action: Flush authorizer cache via API Gateway console or redeploy stage
-      - Long-term: Authorizer already returns wildcard ARN — check if Lambda was redeployed
-
-      ### API Gateway 500 on /users/{user_id}
-      - Symptom: Path parameter routes return 500, collection routes work
-      - Cause: Missing requestParameters mapping in API Gateway integration
-      - Action: Redeploy API Gateway stage: aws apigateway create-deployment --rest-api-id <id> --stage-name ${var.env}
+      - Cause: Lambda authorizer cache (300s TTL) returning stale policy
+      - Action: aws apigateway create-deployment --rest-api-id <id> --stage-name ${var.env}
 
       ### DynamoDB throttling
-      - Symptom: ProvisionedThroughputExceededException in pod logs
-      - Table uses PAY_PER_REQUEST — throttling indicates burst beyond DynamoDB limits
-      - Action: Check for runaway scan operations, add exponential backoff retry
+      - Symptom: ProvisionedThroughputExceededException in service logs
+      - Table uses PAY_PER_REQUEST — check for runaway scans
+      - Logs: aws logs tail /ecs/${local.prefix}-payment-service --filter-pattern "throttl"
 
-      ### TargetGroupBinding not registering pods
-      - Symptom: TG shows no targets despite pods running
-      - Check: kubectl describe targetgroupbinding -n anycompany-users-${var.env}
-      - Common cause: serviceRef.port must match Service port (80), not containerPort (8080)
+      ### ECS service not scaling up
+      - Symptom: CPU high but desired count stays at minimum
+      - Check: aws application-autoscaling describe-scaling-activities --service-namespace ecs
+      - Common cause: App Auto Scaling policy not attached or CloudWatch metrics delayed
 
-      ### HPA not scaling
-      - Symptom: CPU high but pod count stays at minimum
-      - Check: kubectl describe hpa -n anycompany-users-${var.env}
-      - Common cause: metrics-server not running or no resource requests set on pods
-      - Action: kubectl get pods -n kube-system | grep metrics-server
+      ### Shipping service not processing orders
+      - Symptom: Orders paid but no shipment records created
+      - Check: aws sqs get-queue-attributes --queue-url <shipping-dispatch-url> --attribute-names All
+      - Check DLQ depth: if > 0, consume and inspect failed messages
+      - Logs: aws logs tail /ecs/${local.prefix}-shipping-service --follow
 
       ### Cognito 401 Invalid credentials
       - Symptom: Login returns 401 despite correct password

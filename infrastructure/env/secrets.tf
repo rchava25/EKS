@@ -1,87 +1,63 @@
-# ── Secrets Manager — app configuration secrets ───────────────────────────────
-# Replaces plain-text env vars in Deployment manifests.
-# External Secrets Operator (eso.tf) syncs these into K8s Secrets automatically.
+# ── Secrets Manager — per-service runtime configuration ──────────────────────
+# ECS task definitions reference these via valueFrom (secrets injection).
+# The ECS execution role has GetSecretValue on all ${local.prefix}-* secrets.
 
-resource "aws_secretsmanager_secret" "users_service" {
-  name                    = "${local.prefix}-users-service"
-  description             = "Runtime config for users-service pods"
+locals {
+  service_secrets = {
+    users-service = jsonencode({
+      table_name = aws_dynamodb_table.users.name
+      aws_region = var.aws_region
+    })
+    login-service = jsonencode({
+      user_pool_id = aws_cognito_user_pool.main.id
+      client_id    = aws_cognito_user_pool_client.app.id
+      aws_region   = var.aws_region
+    })
+    browse-service = jsonencode({
+      table_name = aws_dynamodb_table.products.name
+      redis_host = aws_elasticache_cluster.browse.cache_nodes[0].address
+      redis_port = tostring(aws_elasticache_cluster.browse.port)
+      aws_region = var.aws_region
+    })
+    search-service = jsonencode({
+      opensearch_host  = "https://${aws_opensearch_domain.search.endpoint}"
+      opensearch_index = "products"
+      aws_region       = var.aws_region
+    })
+    payment-service = jsonencode({
+      orders_table              = aws_dynamodb_table.orders.name
+      shipping_dispatch_queue   = aws_sqs_queue.shipping_dispatch.url
+      payment_events_queue      = aws_sqs_queue.payment_events.url
+      aws_region                = var.aws_region
+    })
+    shipping-service = jsonencode({
+      shipments_table      = aws_dynamodb_table.shipments.name
+      shipping_queue_url   = aws_sqs_queue.shipping_dispatch.url
+      aws_region           = var.aws_region
+    })
+  }
+}
+
+resource "aws_secretsmanager_secret" "services" {
+  for_each                = local.service_secrets
+  name                    = "${local.prefix}-${each.key}"
+  description             = "Runtime config for ${each.key}"
   recovery_window_in_days = 0
 
   tags = {
-    Name    = "${local.prefix}-users-service"
+    Name    = "${local.prefix}-${each.key}"
     Project = "anycompany-users"
     Env     = var.env
   }
 }
 
-resource "aws_secretsmanager_secret_version" "users_service" {
-  secret_id = aws_secretsmanager_secret.users_service.id
-  secret_string = jsonencode({
-    table_name = aws_dynamodb_table.users.name
-    aws_region = var.aws_region
-  })
+resource "aws_secretsmanager_secret_version" "services" {
+  for_each      = local.service_secrets
+  secret_id     = aws_secretsmanager_secret.services[each.key].id
+  secret_string = each.value
 }
 
-resource "aws_secretsmanager_secret" "login_service" {
-  name                    = "${local.prefix}-login-service"
-  description             = "Runtime config for login-service pods"
-  recovery_window_in_days = 0
-
-  tags = {
-    Name    = "${local.prefix}-login-service"
-    Project = "anycompany-users"
-    Env     = var.env
-  }
-}
-
-resource "aws_secretsmanager_secret_version" "login_service" {
-  secret_id = aws_secretsmanager_secret.login_service.id
-  secret_string = jsonencode({
-    user_pool_id = aws_cognito_user_pool.main.id
-    client_id    = aws_cognito_user_pool_client.main.id
-    aws_region   = var.aws_region
-  })
-}
-
-# Grant app roles read access to their own secrets only.
-resource "aws_iam_role_policy" "users_service_secrets" {
-  name = "${local.prefix}-users-secrets-read"
-  role = aws_iam_role.users_service.id
-
-  policy = jsonencode({
-    Version = "2012-10-17"
-    Statement = [{
-      Effect = "Allow"
-      Action = [
-        "secretsmanager:GetSecretValue",
-        "secretsmanager:DescribeSecret",
-      ]
-      Resource = aws_secretsmanager_secret.users_service.arn
-    }]
-  })
-}
-
-resource "aws_iam_role_policy" "login_service_secrets" {
-  name = "${local.prefix}-login-secrets-read"
-  role = aws_iam_role.login_service.id
-
-  policy = jsonencode({
-    Version = "2012-10-17"
-    Statement = [{
-      Effect = "Allow"
-      Action = [
-        "secretsmanager:GetSecretValue",
-        "secretsmanager:DescribeSecret",
-      ]
-      Resource = aws_secretsmanager_secret.login_service.arn
-    }]
-  })
-}
-
-output "users_service_secret_arn" {
-  value = aws_secretsmanager_secret.users_service.arn
-}
-
-output "login_service_secret_arn" {
-  value = aws_secretsmanager_secret.login_service.arn
+output "secret_arns" {
+  description = "Secrets Manager ARNs keyed by service"
+  value       = { for k, s in aws_secretsmanager_secret.services : k => s.arn }
 }
