@@ -3,6 +3,7 @@ from datetime import datetime, timezone
 from typing import Optional
 
 import boto3
+from botocore.exceptions import ClientError
 
 from app.config import AWS_REGION, SHIPMENTS_TABLE
 from app.models.shipment import Shipment
@@ -28,12 +29,18 @@ def create_shipment(order_id: str, user_id: str) -> Shipment:
 
 def update_status(order_id: str, status: str) -> Optional[Shipment]:
     now = datetime.now(timezone.utc).isoformat()
-    resp = _table.update_item(
-        Key={"order_id": order_id},
-        UpdateExpression="SET #s = :s, updated_at = :u",
-        ExpressionAttributeNames={"#s": "status"},
-        ExpressionAttributeValues={":s": status, ":u": now},
-        ReturnValues="ALL_NEW",
-    )
+    try:
+        resp = _table.update_item(
+            Key={"order_id": order_id},
+            UpdateExpression="SET #s = :s, updated_at = :u",
+            ConditionExpression="attribute_exists(order_id)",
+            ExpressionAttributeNames={"#s": "status"},
+            ExpressionAttributeValues={":s": status, ":u": now},
+            ReturnValues="ALL_NEW",
+        )
+    except ClientError as e:
+        if e.response["Error"]["Code"] == "ConditionalCheckFailedException":
+            return None
+        raise
     item = resp.get("Attributes")
     return Shipment(**item) if item else None
