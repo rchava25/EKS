@@ -1,0 +1,18 @@
+After creating claude.md
+
+prompt
+-----------------
+
+I need to build a serverless Users Service with these characteristics:
+- RESTful API for CRUD operations on user records
+- JWT authentication using Amazon Cognito
+- DynamoDB for storage
+- Terraform for infrastructure
+- docker image
+
+Help me write three specification files:
+1. specs/users-service/requirements.md - user stories with testable acceptance criteria
+2. specs/users-service/design.md - architecture, components, and data flow
+3. specs/users-service/tasks.md - ordered implementation tasks with verification steps
+
+Draft each file and let me review before saving.
