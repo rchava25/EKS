@@ -1,4 +1,4 @@
-name: Deploy Users Service
+name: Deploy E-Commerce Platform
 
 on:
   push:
@@ -15,7 +15,7 @@ permissions:
   contents: read
 
 jobs:
-  # ── Resolve env name and tfvars file from branch/PR context ───────────────
+  # ── Resolve env name and tfvars file from branch/PR context ─────────────────
   env-config:
     runs-on: ubuntu-latest
     outputs:
@@ -33,13 +33,11 @@ jobs:
             echo "tfvars_file=environments/mr.tfvars"  >> $GITHUB_OUTPUT
           fi
 
-  # ── Infrastructure: VPC → EKS → ALB → VPC Link → API Gateway → K8s infra ──
+  # ── Infrastructure: single terraform apply (no EKS wait needed with ECS) ────
   infra:
     needs: env-config
     if: github.event.action != 'closed'
     runs-on: ubuntu-latest
-    outputs:
-      eks_cluster_name: anycompany-users-${{ needs.env-config.outputs.env }}-cluster
     steps:
       - uses: actions/checkout@v4
 
@@ -51,6 +49,17 @@ jobs:
       - uses: hashicorp/setup-terraform@v3
         with:
           terraform_version: "~1.7"
+
+      - name: Build Lambda authorizer package
+        run: |
+          ENV="${{ needs.env-config.outputs.env }}"
+          BUILD_DIR="/tmp/anycompany-authorizer-build-${ENV}"
+          ZIP_PATH="/tmp/anycompany-authorizer-${ENV}.zip"
+          rm -rf "${BUILD_DIR}" && mkdir -p "${BUILD_DIR}"
+          python3 -m pip install -q -r src/authorizer/requirements.txt -t "${BUILD_DIR}"
+          cp src/authorizer/lambda_authorizer.py "${BUILD_DIR}/"
+          cd "${BUILD_DIR}" && zip -qr "${ZIP_PATH}" .
+          echo "Built ${ZIP_PATH} ($(du -sh ${ZIP_PATH} | cut -f1))"
 
       - name: Terraform Init
         run: |
@@ -65,71 +74,20 @@ jobs:
             terraform -chdir=${{ env.TF_DIR }} init -reconfigure
           fi
 
-      # Build Lambda authorizer zip with dependencies before Terraform runs.
-      # Terraform reads the filename at plan time for existing Lambda updates,
-      # so the zip must exist before terraform init/plan/apply.
-      - name: Build Lambda authorizer package
+      - name: Terraform Apply
         run: |
-          ENV="${{ needs.env-config.outputs.env }}"
-          BUILD_DIR="/tmp/anycompany-authorizer-build-${ENV}"
-          ZIP_PATH="/tmp/anycompany-authorizer-${ENV}.zip"
-          rm -rf "${BUILD_DIR}"
-          mkdir -p "${BUILD_DIR}"
-          python3 -m pip install -q -r src/authorizer/requirements.txt -t "${BUILD_DIR}"
-          cp src/authorizer/lambda_authorizer.py "${BUILD_DIR}/"
-          cd "${BUILD_DIR}" && zip -qr "${ZIP_PATH}" .
-          echo "Built ${ZIP_PATH} ($(du -sh ${ZIP_PATH} | cut -f1))"
-
-      # Phase 1 — EKS cluster + IAM roles
-      - name: Phase 1 — EKS cluster
-        run: |
-          EKS_CLUSTER="anycompany-users-${{ needs.env-config.outputs.env }}-cluster"
-          EKS_ENDPOINT=$(aws eks describe-cluster --name "${EKS_CLUSTER}" \
-            --query 'cluster.endpoint' --output text 2>/dev/null || echo "")
-          EKS_CA=$(aws eks describe-cluster --name "${EKS_CLUSTER}" \
-            --query 'cluster.certificateAuthority.data' --output text 2>/dev/null || echo "")
           terraform -chdir=${{ env.TF_DIR }} apply \
             -var-file=${{ needs.env-config.outputs.tfvars_file }} \
             -var="env=${{ needs.env-config.outputs.env }}" \
-            -var="eks_cluster_endpoint=${EKS_ENDPOINT}" \
-            -var="eks_cluster_ca_cert=${EKS_CA}" \
-            -target=aws_iam_role.eks_cluster \
-            -target=aws_iam_role.eks_nodes \
-            -target=aws_iam_role_policy_attachment.eks_cluster_policy \
-            -target=aws_iam_role_policy_attachment.eks_worker_node \
-            -target=aws_iam_role_policy_attachment.eks_cni \
-            -target=aws_iam_role_policy_attachment.eks_ecr_read \
-            -target=aws_eks_cluster.main \
-            -target=aws_eks_node_group.main \
             -auto-approve
 
-      - name: Phase 2 — wait for EKS active
-        run: |
-          EKS_CLUSTER="anycompany-users-${{ needs.env-config.outputs.env }}-cluster"
-          echo "Waiting for EKS cluster to become ACTIVE..."
-          aws eks wait cluster-active --name "${EKS_CLUSTER}" --region ${{ env.AWS_REGION }}
-
-      - name: Phase 2 — ALB, API Gateway, K8s infra
-        run: |
-          EKS_CLUSTER="anycompany-users-${{ needs.env-config.outputs.env }}-cluster"
-          EKS_ENDPOINT=$(aws eks describe-cluster --name "${EKS_CLUSTER}" \
-            --query 'cluster.endpoint' --output text)
-          EKS_CA=$(aws eks describe-cluster --name "${EKS_CLUSTER}" \
-            --query 'cluster.certificateAuthority.data' --output text)
-          terraform -chdir=${{ env.TF_DIR }} apply \
-            -var-file=${{ needs.env-config.outputs.tfvars_file }} \
-            -var="env=${{ needs.env-config.outputs.env }}" \
-            -var="eks_cluster_endpoint=${EKS_ENDPOINT}" \
-            -var="eks_cluster_ca_cert=${EKS_CA}" \
-            -auto-approve
-
-  # ── App: unit tests → ECR build/push → EKS rolling deploy ─────────────────
+  # ── App: unit tests → ECR build/push → ECS rolling deploy ──────────────────
   app:
     needs: [env-config, infra]
     if: needs.infra.result == 'success'
     runs-on: ubuntu-latest
     outputs:
-      image_tag: ${{ steps.images.outputs.image_tag }}
+      image_tag: ${{ steps.build.outputs.image_tag }}
     steps:
       - uses: actions/checkout@v4
 
@@ -144,7 +102,9 @@ jobs:
           python-version: "3.10"
 
       - name: Install test dependencies
-        run: pip install fastapi uvicorn boto3 "pydantic[email]" moto pytest httpx "python-jose[cryptography]" cryptography
+        run: |
+          pip install fastapi uvicorn boto3 "pydantic[email]" moto pytest httpx \
+            "python-jose[cryptography]" cryptography
 
       - name: Run unit tests
         run: pytest tests/unit/ -v --tb=short
@@ -157,131 +117,126 @@ jobs:
       - name: Log in to ECR
         uses: aws-actions/amazon-ecr-login@v2
 
-      - name: Build and push images to ECR
-        id: images
+      - name: Build and push all service images
+        id: build
         run: |
-          # Image tag is the git SHA — no env prefix.
-          # The same tag is used in dev, preprod, and prod (build once, promote the tag).
-          IMAGE_TAG="${{ github.sha }}"
-          IMAGE_TAG="${IMAGE_TAG:0:8}"
+          IMAGE_TAG="${GITHUB_SHA:0:8}"
+          PREFIX="anycompany-users-${{ needs.env-config.outputs.env }}"
+          ACCOUNT=$(aws sts get-caller-identity --query Account --output text)
+          ECR_BASE="${ACCOUNT}.dkr.ecr.${{ env.AWS_REGION }}.amazonaws.com"
 
-          LOGIN_ECR=$(aws ecr describe-repositories \
-            --repository-names anycompany-login-service \
-            --query 'repositories[0].repositoryUri' --output text)
-          USERS_ECR=$(aws ecr describe-repositories \
-            --repository-names anycompany-users-service \
-            --query 'repositories[0].repositoryUri' --output text)
+          # Services: "ecr-repo-name|src-dir"
+          SERVICES=(
+            "anycompany-login-service|src/login"
+            "anycompany-users-service|src/users"
+            "anycompany-browse-service|src/browse"
+            "anycompany-search-service|src/search"
+            "anycompany-payment-service|src/payment"
+            "anycompany-shipping-service|src/shipping"
+          )
 
-          # Skip build if this SHA was already pushed (idempotent on retries and
-          # infra-only pushes where application code didn't change).
-          if aws ecr describe-images --repository-name anycompany-login-service \
-               --image-ids imageTag="${IMAGE_TAG}" --region ${{ env.AWS_REGION }} &>/dev/null; then
-            echo "Login image ${IMAGE_TAG} already in ECR — skipping build"
-          else
-            docker build -t "${LOGIN_ECR}:${IMAGE_TAG}" src/login/
-            docker push "${LOGIN_ECR}:${IMAGE_TAG}"
-          fi
+          for svc in "${SERVICES[@]}"; do
+            REPO="${svc%%|*}"
+            DIR="${svc##*|}"
 
-          if aws ecr describe-images --repository-name anycompany-users-service \
-               --image-ids imageTag="${IMAGE_TAG}" --region ${{ env.AWS_REGION }} &>/dev/null; then
-            echo "Users image ${IMAGE_TAG} already in ECR — skipping build"
-          else
-            docker build -t "${USERS_ECR}:${IMAGE_TAG}" src/users/
-            docker push "${USERS_ECR}:${IMAGE_TAG}"
-          fi
+            ECR_URI=$(aws ecr describe-repositories \
+              --repository-names "${REPO}" \
+              --query 'repositories[0].repositoryUri' --output text 2>/dev/null || echo "")
+
+            if [ -z "$ECR_URI" ]; then
+              echo "ECR repo ${REPO} not found — skipping"
+              continue
+            fi
+
+            # Skip if this SHA already pushed (idempotent on retries)
+            if aws ecr describe-images --repository-name "${REPO}" \
+                 --image-ids imageTag="${IMAGE_TAG}" &>/dev/null; then
+              echo "${REPO}:${IMAGE_TAG} already in ECR — skipping build"
+            else
+              echo "Building ${REPO}:${IMAGE_TAG} from ${DIR}/"
+              docker build -t "${ECR_URI}:${IMAGE_TAG}" "${DIR}/"
+              docker push "${ECR_URI}:${IMAGE_TAG}"
+            fi
+          done
 
           echo "image_tag=${IMAGE_TAG}" >> $GITHUB_OUTPUT
-          echo "login_tag=${LOGIN_ECR}:${IMAGE_TAG}" >> $GITHUB_OUTPUT
-          echo "users_tag=${USERS_ECR}:${IMAGE_TAG}" >> $GITHUB_OUTPUT
 
-      - name: Configure kubectl
+      - name: Deploy all ECS services
         run: |
-          aws eks update-kubeconfig \
-            --name ${{ needs.infra.outputs.eks_cluster_name }} \
-            --region ${{ env.AWS_REGION }}
+          IMAGE_TAG="${{ steps.build.outputs.image_tag }}"
+          ENV="${{ needs.env-config.outputs.env }}"
+          PREFIX="anycompany-users-${ENV}"
+          CLUSTER="${PREFIX}-cluster"
+          ACCOUNT=$(aws sts get-caller-identity --query Account --output text)
+          ECR_BASE="${ACCOUNT}.dkr.ecr.${{ env.AWS_REGION }}.amazonaws.com"
 
-      - name: Apply K8s manifests and roll out
-        run: |
-          NS="anycompany-users-${{ needs.env-config.outputs.env }}"
-          LOGIN_TAG="${{ steps.images.outputs.login_tag }}"
-          USERS_TAG="${{ steps.images.outputs.users_tag }}"
+          # Map: "ecs-service-name|container-name|ecr-repo"
+          SERVICES=(
+            "${PREFIX}-login-service|login-service|anycompany-login-service"
+            "${PREFIX}-users-service|users-service|anycompany-users-service"
+            "${PREFIX}-browse-service|browse-service|anycompany-browse-service"
+            "${PREFIX}-search-service|search-service|anycompany-search-service"
+            "${PREFIX}-payment-service|payment-service|anycompany-payment-service"
+            "${PREFIX}-shipping-service|shipping-service|anycompany-shipping-service"
+          )
 
-          sed "s|IMAGE_TAG|${LOGIN_TAG}|g" k8s/login-deployment.yaml | kubectl apply -n "${NS}" -f -
-          sed "s|IMAGE_TAG|${USERS_TAG}|g" k8s/users-deployment.yaml | kubectl apply -n "${NS}" -f -
-          kubectl apply -n "${NS}" -f k8s/login-service.yaml
-          kubectl apply -n "${NS}" -f k8s/users-service.yaml
-          kubectl apply -n "${NS}" -f k8s/login-scaledobject.yaml
-          kubectl apply -n "${NS}" -f k8s/users-scaledobject.yaml
+          for svc in "${SERVICES[@]}"; do
+            ECS_SVC="${svc%%|*}"; rest="${svc#*|}"
+            CONTAINER="${rest%%|*}"
+            REPO="${rest##*|}"
+            NEW_IMAGE="${ECR_BASE}/${REPO}:${IMAGE_TAG}"
 
-          kubectl rollout status deployment/login-service -n "${NS}" --timeout=5m
-          kubectl rollout status deployment/users-service -n "${NS}" --timeout=5m
+            echo "Updating ${ECS_SVC} → ${NEW_IMAGE}"
 
-      - name: Apply TargetGroupBindings
-        run: |
-          NS="anycompany-users-${{ needs.env-config.outputs.env }}"
-          PREFIX="anycompany-users-${{ needs.env-config.outputs.env }}"
+            # Get current task definition family
+            TASK_FAMILY=$(aws ecs describe-services \
+              --cluster "${CLUSTER}" --services "${ECS_SVC}" \
+              --query 'services[0].taskDefinition' --output text | \
+              sed 's|.*/||' | sed 's|:[0-9]*$||')
 
-          LOGIN_TG_ARN=$(aws elbv2 describe-target-groups --region ${{ env.AWS_REGION }} \
-            --names "${PREFIX}-login-tg" \
-            --query 'TargetGroups[0].TargetGroupArn' --output text)
-          USERS_TG_ARN=$(aws elbv2 describe-target-groups --region ${{ env.AWS_REGION }} \
-            --names "${PREFIX}-users-tg" \
-            --query 'TargetGroups[0].TargetGroupArn' --output text)
+            # Fetch current task def and update image for the target container
+            NEW_TASK_DEF=$(aws ecs describe-task-definition \
+              --task-definition "${TASK_FAMILY}" \
+              --query 'taskDefinition' | \
+              python3 -c "
+import sys, json
+td = json.load(sys.stdin)
+for c in td['containerDefinitions']:
+    if c['name'] == '${CONTAINER}':
+        c['image'] = '${NEW_IMAGE}'
+# Strip read-only fields before re-registering
+for key in ['taskDefinitionArn','revision','status','requiresAttributes',
+            'compatibilities','registeredAt','registeredBy']:
+    td.pop(key, None)
+print(json.dumps(td))")
 
-          for i in $(seq 1 24); do
-            kubectl get crd targetgroupbindings.elbv2.k8s.aws &>/dev/null && break
-            echo "Waiting for TargetGroupBinding CRD... ($i/24)"
-            sleep 5
+            # Register new task definition revision
+            NEW_ARN=$(echo "${NEW_TASK_DEF}" | \
+              aws ecs register-task-definition \
+                --cli-input-json file:///dev/stdin \
+                --query 'taskDefinition.taskDefinitionArn' --output text)
+
+            # Update the service
+            aws ecs update-service \
+              --cluster "${CLUSTER}" \
+              --service "${ECS_SVC}" \
+              --task-definition "${NEW_ARN}" \
+              --output text > /dev/null
+
+            echo "  Registered ${NEW_ARN}"
           done
 
-          sed "s|LOGIN_TG_ARN|${LOGIN_TG_ARN}|g" k8s/login-tgb.yaml | kubectl apply -n "${NS}" -f -
-          sed "s|USERS_TG_ARN|${USERS_TG_ARN}|g" k8s/users-tgb.yaml | kubectl apply -n "${NS}" -f -
+          # Wait for all services to reach steady state
+          echo "Waiting for all services to stabilize..."
+          aws ecs wait services-stable \
+            --cluster "${CLUSTER}" \
+            --services $(printf "${PREFIX}-%s " \
+              login-service users-service browse-service \
+              search-service payment-service shipping-service)
 
-      - name: Apply ESO ClusterSecretStore + ExternalSecrets
-        run: |
-          NS="anycompany-users-${{ needs.env-config.outputs.env }}"
-          PREFIX="anycompany-users-${{ needs.env-config.outputs.env }}"
+          echo "All ECS services deployed and stable."
 
-          for i in $(seq 1 24); do
-            kubectl get crd clustersecretstores.external-secrets.io &>/dev/null && break
-            echo "Waiting for ESO CRDs... ($i/24)"; sleep 5
-          done
-
-          sed "s|AWS_REGION|${{ env.AWS_REGION }}|g" k8s/cluster-secret-store.yaml \
-            | kubectl apply -f -
-
-          USERS_SECRET=$(aws secretsmanager describe-secret \
-            --secret-id "${PREFIX}-users-service" \
-            --query 'Name' --output text)
-          LOGIN_SECRET=$(aws secretsmanager describe-secret \
-            --secret-id "${PREFIX}-login-service" \
-            --query 'Name' --output text)
-
-          sed "s|USERS_SECRET_NAME|${USERS_SECRET}|g" k8s/external-secret-users.yaml \
-            | kubectl apply -n "${NS}" -f -
-          sed "s|LOGIN_SECRET_NAME|${LOGIN_SECRET}|g" k8s/external-secret-login.yaml \
-            | kubectl apply -n "${NS}" -f -
-
-      - name: Apply VPA + Kyverno policies
-        run: |
-          NS="anycompany-users-${{ needs.env-config.outputs.env }}"
-
-          for i in $(seq 1 24); do
-            kubectl get crd verticalpodautoscalers.autoscaling.k8s.io &>/dev/null && break
-            echo "Waiting for VPA CRDs... ($i/24)"; sleep 5
-          done
-
-          kubectl apply -n "${NS}" -f k8s/vpa-users.yaml
-          kubectl apply -n "${NS}" -f k8s/vpa-login.yaml
-
-          for i in $(seq 1 24); do
-            kubectl get crd clusterpolicies.kyverno.io &>/dev/null && break
-            echo "Waiting for Kyverno CRDs... ($i/24)"; sleep 5
-          done
-
-          kubectl apply -f k8s/kyverno-policies.yaml
-
-  # ── Check whether preprod credentials are configured ──────────────────────
+  # ── Gate: check whether preprod credentials are configured ──────────────────
   check-preprod:
     needs: app
     if: github.ref == 'refs/heads/main' && needs.app.result == 'success'
@@ -297,7 +252,7 @@ jobs:
             echo "enabled=false" >> $GITHUB_OUTPUT
           fi
 
-  # ── Preprod promotion — manual gate, promotes the same image built in dev ──
+  # ── Preprod promotion — manual gate, promotes same image built in dev ────────
   promote-preprod:
     needs: [app, check-preprod]
     if: needs.check-preprod.outputs.enabled == 'true'
@@ -332,90 +287,70 @@ jobs:
             -backend-config="bucket=${{ secrets.PREPROD_TF_STATE_BUCKET }}" \
             -backend-config="region=${{ env.AWS_REGION }}"
 
-      - name: Phase 1 — EKS cluster (preprod)
+      - name: Terraform Apply (preprod)
         run: |
-          EKS_CLUSTER="anycompany-users-preprod-cluster"
-          EKS_ENDPOINT=$(aws eks describe-cluster --name "${EKS_CLUSTER}" \
-            --query 'cluster.endpoint' --output text 2>/dev/null || echo "")
-          EKS_CA=$(aws eks describe-cluster --name "${EKS_CLUSTER}" \
-            --query 'cluster.certificateAuthority.data' --output text 2>/dev/null || echo "")
           terraform -chdir=${{ env.TF_DIR }} apply \
             -var-file=environments/preprod.tfvars \
             -var="env=preprod" \
-            -var="eks_cluster_endpoint=${EKS_ENDPOINT}" \
-            -var="eks_cluster_ca_cert=${EKS_CA}" \
-            -target=aws_iam_role.eks_cluster \
-            -target=aws_iam_role.eks_nodes \
-            -target=aws_iam_role_policy_attachment.eks_cluster_policy \
-            -target=aws_iam_role_policy_attachment.eks_worker_node \
-            -target=aws_iam_role_policy_attachment.eks_cni \
-            -target=aws_iam_role_policy_attachment.eks_ecr_read \
-            -target=aws_eks_cluster.main \
-            -target=aws_eks_node_group.main \
             -auto-approve
 
-      - name: Phase 2 — wait for EKS active (preprod)
-        run: aws eks wait cluster-active --name anycompany-users-preprod-cluster --region ${{ env.AWS_REGION }}
-
-      - name: Phase 2 — ALB, API Gateway, K8s infra (preprod)
+      - name: Deploy to preprod — same image tag, no rebuild
         run: |
-          EKS_CLUSTER="anycompany-users-preprod-cluster"
-          EKS_ENDPOINT=$(aws eks describe-cluster --name "${EKS_CLUSTER}" \
-            --query 'cluster.endpoint' --output text)
-          EKS_CA=$(aws eks describe-cluster --name "${EKS_CLUSTER}" \
-            --query 'cluster.certificateAuthority.data' --output text)
-          terraform -chdir=${{ env.TF_DIR }} apply \
-            -var-file=environments/preprod.tfvars \
-            -var="env=preprod" \
-            -var="eks_cluster_endpoint=${EKS_ENDPOINT}" \
-            -var="eks_cluster_ca_cert=${EKS_CA}" \
-            -auto-approve
-
-      - name: Configure kubectl (preprod)
-        run: aws eks update-kubeconfig --name anycompany-users-preprod-cluster --region ${{ env.AWS_REGION }}
-
-      - name: Deploy to preprod — same image tag as dev, no rebuild
-        run: |
-          # Reuse the exact image built and tested in dev — no docker pull/retag/push needed.
           IMAGE_TAG="${{ needs.app.outputs.image_tag }}"
-          LOGIN_ECR=$(aws ecr describe-repositories --repository-names anycompany-login-service \
-            --query 'repositories[0].repositoryUri' --output text)
-          USERS_ECR=$(aws ecr describe-repositories --repository-names anycompany-users-service \
-            --query 'repositories[0].repositoryUri' --output text)
+          PREFIX="anycompany-users-preprod"
+          CLUSTER="${PREFIX}-cluster"
+          ACCOUNT=$(aws sts get-caller-identity --query Account --output text)
+          ECR_BASE="${ACCOUNT}.dkr.ecr.${{ env.AWS_REGION }}.amazonaws.com"
 
-          sed "s|IMAGE_TAG|${LOGIN_ECR}:${IMAGE_TAG}|g" k8s/login-deployment.yaml \
-            | kubectl apply -n anycompany-users-preprod -f -
-          sed "s|IMAGE_TAG|${USERS_ECR}:${IMAGE_TAG}|g" k8s/users-deployment.yaml \
-            | kubectl apply -n anycompany-users-preprod -f -
-          kubectl apply -n anycompany-users-preprod -f k8s/login-service.yaml
-          kubectl apply -n anycompany-users-preprod -f k8s/users-service.yaml
-          kubectl apply -n anycompany-users-preprod -f k8s/login-scaledobject.yaml
-          kubectl apply -n anycompany-users-preprod -f k8s/users-scaledobject.yaml
+          SERVICES=(
+            "${PREFIX}-login-service|login-service|anycompany-login-service"
+            "${PREFIX}-users-service|users-service|anycompany-users-service"
+            "${PREFIX}-browse-service|browse-service|anycompany-browse-service"
+            "${PREFIX}-search-service|search-service|anycompany-search-service"
+            "${PREFIX}-payment-service|payment-service|anycompany-payment-service"
+            "${PREFIX}-shipping-service|shipping-service|anycompany-shipping-service"
+          )
 
-          kubectl rollout status deployment/login-service -n anycompany-users-preprod --timeout=5m
-          kubectl rollout status deployment/users-service -n anycompany-users-preprod --timeout=5m
+          for svc in "${SERVICES[@]}"; do
+            ECS_SVC="${svc%%|*}"; rest="${svc#*|}"
+            CONTAINER="${rest%%|*}"; REPO="${rest##*|}"
+            NEW_IMAGE="${ECR_BASE}/${REPO}:${IMAGE_TAG}"
 
-      - name: Apply TargetGroupBindings (preprod)
-        run: |
-          LOGIN_TG_ARN=$(aws elbv2 describe-target-groups --region ${{ env.AWS_REGION }} \
-            --names anycompany-users-preprod-login-tg \
-            --query 'TargetGroups[0].TargetGroupArn' --output text)
-          USERS_TG_ARN=$(aws elbv2 describe-target-groups --region ${{ env.AWS_REGION }} \
-            --names anycompany-users-preprod-users-tg \
-            --query 'TargetGroups[0].TargetGroupArn' --output text)
+            TASK_FAMILY=$(aws ecs describe-services \
+              --cluster "${CLUSTER}" --services "${ECS_SVC}" \
+              --query 'services[0].taskDefinition' --output text | \
+              sed 's|.*/||' | sed 's|:[0-9]*$||')
 
-          for i in $(seq 1 24); do
-            kubectl get crd targetgroupbindings.elbv2.k8s.aws &>/dev/null && break
-            echo "Waiting for TargetGroupBinding CRD... ($i/24)"
-            sleep 5
+            NEW_TASK_DEF=$(aws ecs describe-task-definition \
+              --task-definition "${TASK_FAMILY}" --query 'taskDefinition' | \
+              python3 -c "
+import sys, json
+td = json.load(sys.stdin)
+for c in td['containerDefinitions']:
+    if c['name'] == '${CONTAINER}':
+        c['image'] = '${NEW_IMAGE}'
+for key in ['taskDefinitionArn','revision','status','requiresAttributes',
+            'compatibilities','registeredAt','registeredBy']:
+    td.pop(key, None)
+print(json.dumps(td))")
+
+            NEW_ARN=$(echo "${NEW_TASK_DEF}" | \
+              aws ecs register-task-definition \
+                --cli-input-json file:///dev/stdin \
+                --query 'taskDefinition.taskDefinitionArn' --output text)
+
+            aws ecs update-service \
+              --cluster "${CLUSTER}" --service "${ECS_SVC}" \
+              --task-definition "${NEW_ARN}" --output text > /dev/null
           done
 
-          sed "s|LOGIN_TG_ARN|${LOGIN_TG_ARN}|g" k8s/login-tgb.yaml \
-            | kubectl apply -n anycompany-users-preprod -f -
-          sed "s|USERS_TG_ARN|${USERS_TG_ARN}|g" k8s/users-tgb.yaml \
-            | kubectl apply -n anycompany-users-preprod -f -
+          aws ecs wait services-stable \
+            --cluster "${CLUSTER}" \
+            --services $(printf "${PREFIX}-%s " \
+              login-service users-service browse-service \
+              search-service payment-service shipping-service)
 
-  # ── Check whether prod credentials are configured ─────────────────────────
+  # ── Gate: check whether prod credentials are configured ─────────────────────
   check-prod:
     needs: promote-preprod
     if: needs.promote-preprod.result == 'success'
@@ -431,7 +366,7 @@ jobs:
             echo "enabled=false" >> $GITHUB_OUTPUT
           fi
 
-  # ── Prod promotion — manual gate, promotes the same image from preprod ─────
+  # ── Prod promotion — manual gate, promotes same image from preprod ───────────
   promote-prod:
     needs: [app, check-prod]
     if: needs.check-prod.outputs.enabled == 'true'
@@ -466,89 +401,70 @@ jobs:
             -backend-config="bucket=${{ secrets.PROD_TF_STATE_BUCKET }}" \
             -backend-config="region=${{ env.AWS_REGION }}"
 
-      - name: Phase 1 — EKS cluster (prod)
+      - name: Terraform Apply (prod)
         run: |
-          EKS_CLUSTER="anycompany-users-prod-cluster"
-          EKS_ENDPOINT=$(aws eks describe-cluster --name "${EKS_CLUSTER}" \
-            --query 'cluster.endpoint' --output text 2>/dev/null || echo "")
-          EKS_CA=$(aws eks describe-cluster --name "${EKS_CLUSTER}" \
-            --query 'cluster.certificateAuthority.data' --output text 2>/dev/null || echo "")
           terraform -chdir=${{ env.TF_DIR }} apply \
             -var-file=environments/prod.tfvars \
             -var="env=prod" \
-            -var="eks_cluster_endpoint=${EKS_ENDPOINT}" \
-            -var="eks_cluster_ca_cert=${EKS_CA}" \
-            -target=aws_iam_role.eks_cluster \
-            -target=aws_iam_role.eks_nodes \
-            -target=aws_iam_role_policy_attachment.eks_cluster_policy \
-            -target=aws_iam_role_policy_attachment.eks_worker_node \
-            -target=aws_iam_role_policy_attachment.eks_cni \
-            -target=aws_iam_role_policy_attachment.eks_ecr_read \
-            -target=aws_eks_cluster.main \
-            -target=aws_eks_node_group.main \
             -auto-approve
 
-      - name: Phase 2 — wait for EKS active (prod)
-        run: aws eks wait cluster-active --name anycompany-users-prod-cluster --region ${{ env.AWS_REGION }}
-
-      - name: Phase 2 — ALB, API Gateway, K8s infra (prod)
-        run: |
-          EKS_CLUSTER="anycompany-users-prod-cluster"
-          EKS_ENDPOINT=$(aws eks describe-cluster --name "${EKS_CLUSTER}" \
-            --query 'cluster.endpoint' --output text)
-          EKS_CA=$(aws eks describe-cluster --name "${EKS_CLUSTER}" \
-            --query 'cluster.certificateAuthority.data' --output text)
-          terraform -chdir=${{ env.TF_DIR }} apply \
-            -var-file=environments/prod.tfvars \
-            -var="env=prod" \
-            -var="eks_cluster_endpoint=${EKS_ENDPOINT}" \
-            -var="eks_cluster_ca_cert=${EKS_CA}" \
-            -auto-approve
-
-      - name: Configure kubectl (prod)
-        run: aws eks update-kubeconfig --name anycompany-users-prod-cluster --region ${{ env.AWS_REGION }}
-
-      - name: Deploy to prod — same image tag as dev and preprod, no rebuild
+      - name: Deploy to prod — same image tag, no rebuild
         run: |
           IMAGE_TAG="${{ needs.app.outputs.image_tag }}"
-          LOGIN_ECR=$(aws ecr describe-repositories --repository-names anycompany-login-service \
-            --query 'repositories[0].repositoryUri' --output text)
-          USERS_ECR=$(aws ecr describe-repositories --repository-names anycompany-users-service \
-            --query 'repositories[0].repositoryUri' --output text)
+          PREFIX="anycompany-users-prod"
+          CLUSTER="${PREFIX}-cluster"
+          ACCOUNT=$(aws sts get-caller-identity --query Account --output text)
+          ECR_BASE="${ACCOUNT}.dkr.ecr.${{ env.AWS_REGION }}.amazonaws.com"
 
-          sed "s|IMAGE_TAG|${LOGIN_ECR}:${IMAGE_TAG}|g" k8s/login-deployment.yaml \
-            | kubectl apply -n anycompany-users-prod -f -
-          sed "s|IMAGE_TAG|${USERS_ECR}:${IMAGE_TAG}|g" k8s/users-deployment.yaml \
-            | kubectl apply -n anycompany-users-prod -f -
-          kubectl apply -n anycompany-users-prod -f k8s/login-service.yaml
-          kubectl apply -n anycompany-users-prod -f k8s/users-service.yaml
-          kubectl apply -n anycompany-users-prod -f k8s/login-scaledobject.yaml
-          kubectl apply -n anycompany-users-prod -f k8s/users-scaledobject.yaml
+          SERVICES=(
+            "${PREFIX}-login-service|login-service|anycompany-login-service"
+            "${PREFIX}-users-service|users-service|anycompany-users-service"
+            "${PREFIX}-browse-service|browse-service|anycompany-browse-service"
+            "${PREFIX}-search-service|search-service|anycompany-search-service"
+            "${PREFIX}-payment-service|payment-service|anycompany-payment-service"
+            "${PREFIX}-shipping-service|shipping-service|anycompany-shipping-service"
+          )
 
-          kubectl rollout status deployment/login-service -n anycompany-users-prod --timeout=5m
-          kubectl rollout status deployment/users-service -n anycompany-users-prod --timeout=5m
+          for svc in "${SERVICES[@]}"; do
+            ECS_SVC="${svc%%|*}"; rest="${svc#*|}"
+            CONTAINER="${rest%%|*}"; REPO="${rest##*|}"
+            NEW_IMAGE="${ECR_BASE}/${REPO}:${IMAGE_TAG}"
 
-      - name: Apply TargetGroupBindings (prod)
-        run: |
-          LOGIN_TG_ARN=$(aws elbv2 describe-target-groups --region ${{ env.AWS_REGION }} \
-            --names anycompany-users-prod-login-tg \
-            --query 'TargetGroups[0].TargetGroupArn' --output text)
-          USERS_TG_ARN=$(aws elbv2 describe-target-groups --region ${{ env.AWS_REGION }} \
-            --names anycompany-users-prod-users-tg \
-            --query 'TargetGroups[0].TargetGroupArn' --output text)
+            TASK_FAMILY=$(aws ecs describe-services \
+              --cluster "${CLUSTER}" --services "${ECS_SVC}" \
+              --query 'services[0].taskDefinition' --output text | \
+              sed 's|.*/||' | sed 's|:[0-9]*$||')
 
-          for i in $(seq 1 24); do
-            kubectl get crd targetgroupbindings.elbv2.k8s.aws &>/dev/null && break
-            echo "Waiting for TargetGroupBinding CRD... ($i/24)"
-            sleep 5
+            NEW_TASK_DEF=$(aws ecs describe-task-definition \
+              --task-definition "${TASK_FAMILY}" --query 'taskDefinition' | \
+              python3 -c "
+import sys, json
+td = json.load(sys.stdin)
+for c in td['containerDefinitions']:
+    if c['name'] == '${CONTAINER}':
+        c['image'] = '${NEW_IMAGE}'
+for key in ['taskDefinitionArn','revision','status','requiresAttributes',
+            'compatibilities','registeredAt','registeredBy']:
+    td.pop(key, None)
+print(json.dumps(td))")
+
+            NEW_ARN=$(echo "${NEW_TASK_DEF}" | \
+              aws ecs register-task-definition \
+                --cli-input-json file:///dev/stdin \
+                --query 'taskDefinition.taskDefinitionArn' --output text)
+
+            aws ecs update-service \
+              --cluster "${CLUSTER}" --service "${ECS_SVC}" \
+              --task-definition "${NEW_ARN}" --output text > /dev/null
           done
 
-          sed "s|LOGIN_TG_ARN|${LOGIN_TG_ARN}|g" k8s/login-tgb.yaml \
-            | kubectl apply -n anycompany-users-prod -f -
-          sed "s|USERS_TG_ARN|${USERS_TG_ARN}|g" k8s/users-tgb.yaml \
-            | kubectl apply -n anycompany-users-prod -f -
+          aws ecs wait services-stable \
+            --cluster "${CLUSTER}" \
+            --services $(printf "${PREFIX}-%s " \
+              login-service users-service browse-service \
+              search-service payment-service shipping-service)
 
-  # ── Teardown ephemeral MR environment when PR is closed ───────────────────
+  # ── Teardown ephemeral MR environment when PR is closed ─────────────────────
   teardown-mr:
     needs: env-config
     if: github.event_name == 'pull_request' && github.event.action == 'closed'

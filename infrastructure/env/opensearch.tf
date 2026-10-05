@@ -30,6 +30,13 @@ resource "aws_security_group_rule" "opensearch_egress" {
   security_group_id = aws_security_group.opensearch.id
 }
 
+# OpenSearch requires this SLR to place the domain inside a VPC.
+resource "aws_iam_service_linked_role" "opensearch" {
+  aws_service_name = "es.amazonaws.com"
+  # If role already exists this will error — use terraform import to resolve:
+  # terraform import aws_iam_service_linked_role.opensearch arn:aws:iam::ACCOUNT:role/aws-service-role/es.amazonaws.com/AWSServiceRoleForAmazonOpenSearchService
+}
+
 resource "aws_opensearch_domain" "search" {
   domain_name    = "${local.prefix}-search"
   engine_version = "OpenSearch_2.11"
@@ -76,6 +83,8 @@ resource "aws_opensearch_domain" "search" {
     Project = "anycompany-users"
     Env     = var.env
   }
+
+  depends_on = [aws_iam_service_linked_role.opensearch]
 }
 
 output "opensearch_endpoint" {
